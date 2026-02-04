@@ -11,26 +11,26 @@ import matplotlib.font_manager as fm
 # ---------------------------------------------------------
 # [기본 설정] 폰트 및 페이지 디자인
 # ---------------------------------------------------------
-st.set_page_config(page_title="슬기로운 발주생활", page_icon="🛒", layout="wide")
+st.set_page_config(page_title="슬기로운 품앗이생활", page_icon="🌱", layout="wide")
 
-# 한글 폰트 설정 (Streamlit Cloud & Windows 호환)
+# 한글 폰트 설정
 def set_korean_font():
-    if os.name == 'posix': # 리눅스(Streamlit Cloud)
+    if os.name == 'posix':
         plt.rc('font', family='NanumGothic')
-    else: # 윈도우(로컬)
+    else:
         plt.rc('font', family='Malgun Gothic')
     plt.rcParams['axes.unicode_minus'] = False
 
 set_korean_font()
 
-st.title("슬기로운 발주생활 🛒")
-st.header("품앗이 오더 (Poomasi Order)")
-st.markdown("### 품앗이생협 통합 업무 지원 시스템 (발주 & 마케팅)")
+# 메인 타이틀 (대문)
+st.title("슬기로운 품앗이생활 🌱")
+st.markdown("### 데이터로 만드는 우리들의 협동조합")
 
 # ---------------------------------------------------------
 # [공통] 파일 업로드 섹션
 # ---------------------------------------------------------
-st.info("💡 **매입처 기준표**와 **POS 판매 데이터**를 업로드하면, 발주서와 마케팅 전략이 동시에 생성됩니다!")
+st.info("💡 **매입처 기준표**와 **POS 판매 데이터**를 업로드하면, 우리 매장의 '생활 기록부'가 펼쳐집니다.")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -42,9 +42,10 @@ with col2:
     uploaded_file_sales = st.file_uploader("직매장 판매내역 엑셀(행복ICT)을 올려주세요", type=['xlsx', 'csv'])
 
 # ---------------------------------------------------------
-# [탭 설정] 업무 공간 분리
+# [탭 설정] 업무 공간 분리 (이름 변경!)
 # ---------------------------------------------------------
-tab1, tab2 = st.tabs(["📊 발주 비서 (재고관리)", "💡 마케팅 비서 (전략분석)"])
+# 여기가 핵심입니다! 탭 이름을 바꿨습니다.
+tab1, tab2 = st.tabs(["🛒 슬기로운 발주생활", "📈 슬기로운 마케팅생활"])
 
 # 데이터가 둘 다 있을 때만 작동
 if uploaded_file_standard and uploaded_file_sales:
@@ -58,13 +59,13 @@ if uploaded_file_standard and uploaded_file_sales:
         df_sales = pd.read_excel(uploaded_file_sales)
 
     # =========================================================
-    # [Tab 1] 발주 비서 로직
+    # [Tab 1] 슬기로운 발주생활
     # =========================================================
     with tab1:
-        st.markdown("### 📋 품앗이님들이 많이 찾은 상품 발주하기")
+        st.markdown("### 📋 품절 없는 매장을 위한 똑똑한 주문")
         
         if st.button("🚀 발주 분석 시작하기", key="order_btn"):
-            with st.spinner('데이터를 분석하여 발주서를 만드는 중...'):
+            with st.spinner('데이터를 분석 중입니다...'):
                 # 컬럼명 처리
                 sales_cols = df_sales.columns
                 item_col = '품목명' if '품목명' in sales_cols else '상품명'
@@ -111,13 +112,13 @@ if uploaded_file_standard and uploaded_file_sales:
                 )
 
     # =========================================================
-    # [Tab 2] 마케팅 비서 로직
+    # [Tab 2] 슬기로운 마케팅생활
     # =========================================================
     with tab2:
-        st.markdown("### 💡 데이터가 말해주는 '품앗이님'의 마음")
+        st.markdown("### 💡 주인의 마음을 읽는 데이터 전략")
         
         if st.button("🔍 마케팅 전략 분석하기", key="mkt_btn"):
-            with st.spinner('장바구니 속 마음을 읽는 중...'):
+            with st.spinner('장바구니 속 이야기를 읽는 중...'):
                 df_mkt = df_sales.copy()
                 req_cols = ['회원', '결제금액', '판매일시', '품목명']
                 missing_cols = [c for c in req_cols if c not in df_mkt.columns]
@@ -130,7 +131,7 @@ if uploaded_file_standard and uploaded_file_sales:
                     df_member['판매일시'] = pd.to_datetime(df_member['판매일시'])
                     df_member['date'] = df_member['판매일시'].dt.date
 
-                    st.subheader("1. '이거 살 때 저것도 샀다' (연관 구매)")
+                    st.subheader("1. 짝꿍 상품 분석 (연관 구매)")
                     top_items = df_member['품목명'].value_counts().head(50).index.tolist()
                     df_top = df_member[df_member['품목명'].isin(top_items)]
                     df_top['basket_id'] = df_top['회원'].astype(str) + "_" + df_top['판매일시'].astype(str)
@@ -148,13 +149,13 @@ if uploaded_file_standard and uploaded_file_sales:
                         df_pairs = pd.DataFrame([{'조합': f"{p[0]} + {p[1]}", '횟수': c} for p, c in top_pairs])
                         fig1, ax1 = plt.subplots(figsize=(10, 6))
                         sns.barplot(data=df_pairs, x='횟수', y='조합', palette='viridis', ax=ax1)
-                        ax1.set_title('품앗이 장바구니 베스트 짝꿍 Top 10')
+                        ax1.set_title('함께 많이 팔린 짝꿍 상품 Top 10')
                         st.pyplot(fig1)
                     else:
                         st.info("데이터가 부족합니다.")
 
                     st.markdown("---")
-                    st.subheader("2. 누가 진짜 주인인가? (충성도 분석)")
+                    st.subheader("2. 단골(주인) 분포도")
                     current_date = df_member['판매일시'].max()
                     rfm = df_member.groupby('회원').agg({
                         '판매일시': lambda x: (current_date - x.max()).days,
@@ -170,7 +171,7 @@ if uploaded_file_standard and uploaded_file_sales:
                     )
                     ax2.axvline(rfm['방문횟수'].median(), color='red', linestyle='--', alpha=0.3)
                     ax2.axhline(rfm['총구매액'].median(), color='red', linestyle='--', alpha=0.3)
-                    ax2.set_title('품앗이님(조합원) 분포도')
+                    ax2.set_title('품앗이님 활동 분포 (RFM)')
                     st.pyplot(fig2)
 
 else:
