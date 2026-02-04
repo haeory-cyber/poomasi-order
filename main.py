@@ -5,7 +5,8 @@ import re
 from datetime import datetime
 
 # --- 페이지 설정 (품앗이 정체성) ---
-st.set_page_config(page_title="품앗이생협 발주비서", page_icon="🛒", layout="wide")
+st.set_page_config(page_title="슬기로운 발주생활", page_icon="🛒", layout="wide")
+st.header("품앗이발주비서")
 
 st.title("🛒 품앗이생협 로컬푸드 2.0 발주 시스템")
 st.markdown("**'데이터'**를 통해 **'사람(품앗이님)'**을 남기는 정직한 발주를 시작합니다.")
@@ -93,4 +94,5 @@ if uploaded_checklist and uploaded_sale:
             st.error(f"오류가 발생했습니다: {e}")
 
 else:
+
     st.info("👆 위 두 개의 파일을 업로드하면 분석 버튼이 나타납니다.")
