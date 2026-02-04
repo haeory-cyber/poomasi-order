@@ -1,3 +1,10 @@
 streamlit
 pandas
+
 openpyxl
+streamlit
+pandas
+openpyxl
+matplotlib
+seaborn
+koreanize-matplotlib
