@@ -11,7 +11,7 @@ with st.sidebar:
     st.header("🔒 품앗이님 확인")
     password = st.text_input("조합원 비밀번호를 입력하세요", type="password")
     
-    if password != "poomasi2026":
+    if password != "poom0118**":
         st.warning("비밀번호를 입력해야 입장할 수 있습니다.")
         st.stop()
     
