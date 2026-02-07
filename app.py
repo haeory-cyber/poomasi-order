@@ -155,35 +155,17 @@ else:
                  loyal_fans[final_phone_col] = "-"
 
             # ========================================================
-            # 3. [핵심] 데이터 청소 (유령 제거 + 중복 통합)
+            # 3. [핵심] 순도 100% 정제 (조합원만 남기기)
             # ========================================================
             
-            # A. 이름 없는 유령 회원 제거
-            # (이름이 비어있거나 'nan'인 행 삭제)
-            clean_fans = loyal_fans[loyal_fans[buyer_name_col].notna() & (loyal_fans[buyer_name_col].astype(str) != 'nan')].copy()
+            # A. 엄격한 필터링: 연락처가 없는 사람(비회원/유령)은 과감히 제외
+            valid_fans = loyal_fans[loyal_fans[final_phone_col] != '-'].copy()
             
-            # B. 중복 통합 (황미영님 하나로 합치기)
-            # 이름과 연락처가 같으면 구매횟수를 더해서 하나로 만듦
-            # 연락처가 '-'인 사람은 이름만 같아도 합칠지 결정해야 하는데, 일단은 '이름+연락처' 기준
+            # B. 중복 통합 (황미영님 합치기)
+            # 이름과 연락처가 같으면 하나로 합치고 구매횟수는 더함
+            final_df = valid_fans.groupby([buyer_name_col, final_phone_col])['구매횟수'].sum().reset_index()
             
-            if final_phone_col in clean_fans.columns:
-                # 1. 연락처가 있는 사람끼리 통합
-                has_phone = clean_fans[clean_fans[final_phone_col] != '-']
-                no_phone = clean_fans[clean_fans[final_phone_col] == '-']
-                
-                # 연락처 있는 그룹: 이름+연락처 기준으로 합치기
-                has_phone_grouped = has_phone.groupby([buyer_name_col, final_phone_col])['구매횟수'].sum().reset_index()
-                
-                # 연락처 없는 그룹: 이름 기준으로 합치기 (혹은 그대로 둠)
-                no_phone_grouped = no_phone.groupby([buyer_name_col])['구매횟수'].sum().reset_index()
-                no_phone_grouped[final_phone_col] = "-"
-                
-                # 다시 합치기
-                final_df = pd.concat([has_phone_grouped, no_phone_grouped], ignore_index=True)
-            else:
-                final_df = clean_fans
-            
-            # C. 정렬 (구매 많은 순)
+            # C. 정렬 (많이 산 순서대로)
             final_df = final_df.sort_values(by='구매횟수', ascending=False)
 
             # ------------------------------------------------
@@ -191,22 +173,20 @@ else:
             # ------------------------------------------------
             st.markdown("---")
             total_cleaned = len(final_df)
-            matched_count = (final_df[final_phone_col] != "-").sum()
             
-            st.subheader(f"✅ '{selected_farmer}'님의 진짜 단골 ({total_cleaned}명)")
-            st.success(f"🧹 중복과 유령 회원을 제거하고 **{len(loyal_fans) - total_cleaned}명**을 정리했습니다.")
-            st.info(f"📞 문자 발송 가능 인원: **{matched_count}명**")
-
+            st.subheader(f"✅ '{selected_farmer}'님의 진짜 품앗이님 ({total_cleaned}명)")
+            st.success("✨ 명부와 정확히 일치하는 조합원만 추려냈습니다.")
+            
             col1, col2 = st.columns([2, 1])
             with col1:
                 st.dataframe(final_df, use_container_width=True, hide_index=True)
                 
             with col2:
-                st.success("📂 **최종 정리 파일**")
-                st.markdown("깔끔하게 정리된 명단입니다.")
+                st.success("📂 **발송용 명단 다운로드**")
+                st.markdown("이 파일은 바로 문자를 보내도 안전합니다.")
                 buffer = io.BytesIO()
                 try: import xlsxwriter; engine='xlsxwriter'
                 except: engine='openpyxl'
                 with pd.ExcelWriter(buffer, engine=engine) as writer:
                     final_df.to_excel(writer, index=False)
-                st.download_button("📥 엑셀 받기", data=buffer, file_name=f"{selected_farmer}_정리된단골.xlsx")
+                st.download_button("📥 엑셀 받기", data=buffer, file_name=f"{selected_farmer}_조합원명단.xlsx")
