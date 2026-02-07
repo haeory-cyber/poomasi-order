@@ -8,48 +8,30 @@ import hmac
 import hashlib
 import uuid
 import datetime
-import requests # 쿨에스엠에스 없이 직접 보내는 도구
+import requests
 
 # ==========================================
-# 0. [내장함수] 쿨에스엠에스 직접 연결 (설치X)
+# 0. [내장함수] 쿨에스엠에스 직접 연결
 # ==========================================
 def send_coolsms_direct(api_key, api_secret, sender, receiver, text):
-    """
-    라이브러리 없이 직접 쿨에스엠에스(솔라피) API를 호출하는 함수
-    """
-    # 1. 서명 생성 (보안)
-    date = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    salt = str(uuid.uuid4())
-    data = date + salt
-    signature = hmac.new(api_secret.encode('utf-8'), data.encode('utf-8'), hashlib.sha256).hexdigest()
-    
-    headers = {
-        "Authorization": f"HMAC-SHA256 apiKey={api_key}, date={date}, salt={salt}, signature={signature}",
-        "Content-Type": "application/json"
-    }
-    
-    # 2. 메시지 준비
-    url = "https://api.coolsms.co.kr/messages/v4/send"
-    payload = {
-        "message": {
-            "to": receiver,
-            "from": sender,
-            "text": text
-        }
-    }
-    
-    # 3. 발송 (requests 사용)
     try:
+        date = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        salt = str(uuid.uuid4())
+        data = date + salt
+        signature = hmac.new(api_secret.encode('utf-8'), data.encode('utf-8'), hashlib.sha256).hexdigest()
+        headers = {
+            "Authorization": f"HMAC-SHA256 apiKey={api_key}, date={date}, salt={salt}, signature={signature}",
+            "Content-Type": "application/json"
+        }
+        url = "https://api.coolsms.co.kr/messages/v4/send"
+        payload = {"message": {"to": receiver, "from": sender, "text": text}}
         res = requests.post(url, json=payload, headers=headers)
-        if res.status_code == 200:
-            return True, res.json()
-        else:
-            return False, res.json()
-    except Exception as e:
-        return False, str(e)
+        if res.status_code == 200: return True, res.json()
+        else: return False, res.json()
+    except Exception as e: return False, str(e)
 
 # ==========================================
-# 1. [기본 설정 & 디자인]
+# 1. [기본 설정]
 # ==========================================
 st.set_page_config(page_title="품앗이마을 관계망", page_icon="🤝", layout="wide")
 
@@ -63,8 +45,6 @@ with st.sidebar:
     
     st.markdown("---")
     st.header("⚙️ 쿨에스엠에스 설정")
-    st.caption("발급받은 키를 넣어주세요.")
-    
     api_key = st.text_input("API Key", type="password", placeholder="NCS...")
     api_secret = st.text_input("API Secret", type="password", placeholder="CCPY...")
     sender_number = st.text_input("발신번호 (하이픈 없이)", placeholder="01012345678")
@@ -80,14 +60,13 @@ with st.sidebar:
         st.caption(f"ℹ️ 서버 명부 사용: {local_member}")
 
 # ==========================================
-# 2. [데이터 로드]
+# 2. [데이터 로드 & 정제]
 # ==========================================
 @st.cache_data
 def load_data_from_upload(file_obj, type='sales'):
     if file_obj is None: return None, "파일 없음"
     df_raw = None
-    try:
-        df_raw = pd.read_excel(file_obj, header=None, engine='openpyxl')
+    try: df_raw = pd.read_excel(file_obj, header=None, engine='openpyxl')
     except:
         for enc in ['utf-8', 'cp949', 'euc-kr']:
             try:
@@ -131,19 +110,15 @@ def clean_phone_number(phone):
 # ==========================================
 st.title("🤝 생산자와 품앗이님을 잇는 '연결 고리'")
 
-if uploaded_sales:
-    df_sales, msg_sales = load_data_from_upload(uploaded_sales, 'sales')
-else:
-    df_sales, msg_sales = None, "파일 없음"
+if uploaded_sales: df_sales, msg_sales = load_data_from_upload(uploaded_sales, 'sales')
+else: df_sales, msg_sales = None, "파일 없음"
 
-if uploaded_member:
-    df_member, msg_member = load_data_from_upload(uploaded_member, 'member')
+if uploaded_member: df_member, msg_member = load_data_from_upload(uploaded_member, 'member')
 elif local_member:
     with open(local_member, 'rb') as f:
         file_content = io.BytesIO(f.read())
         df_member, msg_member = load_data_from_upload(file_content, 'member')
-else:
-    df_member, msg_member = None, "명부 없음"
+else: df_member, msg_member = None, "명부 없음"
 
 if df_sales is None:
     st.info("👈 **왼쪽 사이드바**에서 판매 내역 파일을 업로드해주세요.")
@@ -167,19 +142,16 @@ else:
             selected_farmer = st.selectbox("농가 선택", filtered_farmers)
             
         farmer_df_full = df_sales[df_sales[farmer_col] == selected_farmer].copy()
-        
         with c2:
             if item_col:
                 all_items = farmer_df_full[item_col].value_counts().index.tolist()
                 item_options = ["전체 상품 보기"] + all_items
                 selected_item = st.selectbox("📦 품목 선택", item_options)
-            else:
-                selected_item = "전체 상품 보기"
+            else: selected_item = "전체 상품 보기"
 
         if selected_item != "전체 상품 보기":
             target_df = farmer_df_full[farmer_df_full[item_col] == selected_item].copy()
-        else:
-            target_df = farmer_df_full
+        else: target_df = farmer_df_full
 
         # 집계
         group_key = buyer_id_col if buyer_id_col else buyer_name_col
@@ -231,61 +203,83 @@ else:
             final_df = pd.DataFrame(columns=[buyer_name_col, 'clean_phone', '구매횟수'])
 
         # ==========================================
-        # 4. [탭 구성] 조회 vs 발송
+        # [NEW] 체크박스 선택 기능
         # ==========================================
         st.markdown("---")
-        tab1, tab2 = st.tabs(["📊 명단 조회 & 엑셀 다운", "🚀 **[NEW] 자동 문자 발송**"])
+        st.subheader(f"✅ 대상자 선택 ({len(final_df)}명)")
+        
+        if len(final_df) > 0:
+            # 1. '발송' 컬럼 추가 (기본값 True)
+            final_df.insert(0, "발송", True)
+            
+            # 2. 에디터로 보여주기 (여기서 체크 가능)
+            st.info("👇 아래 표에서 발송하고 싶지 않은 사람은 **체크를 해제**하세요.")
+            edited_df = st.data_editor(
+                final_df,
+                column_config={
+                    "발송": st.column_config.CheckboxColumn("선택", help="체크된 사람만 발송/다운로드 됩니다.", default=True),
+                    "clean_phone": st.column_config.TextColumn("전화번호"),
+                    "구매횟수": st.column_config.NumberColumn("구매횟수", format="%d회"),
+                },
+                disabled=["이름", "전화번호", "구매횟수"],
+                hide_index=True,
+                use_container_width=True
+            )
+            
+            # 3. 선택된 사람만 걸러내기
+            selected_df = edited_df[edited_df['발송'] == True].drop(columns=['발송'])
+            st.write(f"👉 **총 {len(final_df)}명 중 {len(selected_df)}명 선택됨**")
+        else:
+            selected_df = pd.DataFrame()
+            st.warning("데이터가 없습니다.")
+
+        # ==========================================
+        # 4. [탭 구성] 조회 vs 발송
+        # ==========================================
+        tab1, tab2 = st.tabs(["📊 엑셀 다운로드", "🚀 자동 문자 발송"])
         
         with tab1:
-            st.subheader(f"✅ 발송 대상: 총 {len(final_df)}명")
-            if len(final_df) > 0:
+            if len(selected_df) > 0:
                 c_d1, c_d2, c_d3 = st.columns(3)
                 with c_d1:
                     buffer1 = io.BytesIO()
-                    with pd.ExcelWriter(buffer1, engine='xlsxwriter') as writer: final_df.to_excel(writer, index=False)
-                    st.download_button("📥 분석용 엑셀 (상세)", data=buffer1, file_name=f"{selected_farmer}_상세.xlsx")
+                    with pd.ExcelWriter(buffer1, engine='xlsxwriter') as writer: selected_df.to_excel(writer, index=False)
+                    st.download_button("📥 분석용 엑셀 (선택된 명단)", data=buffer1, file_name=f"{selected_farmer}_선택명단.xlsx")
                 with c_d2:
-                    # [수정] final_phone_col 대신 'clean_phone' 사용
-                    k_df = final_df[[buyer_name_col, 'clean_phone']].copy()
+                    k_df = selected_df[[buyer_name_col, 'clean_phone']].copy()
                     k_df.columns = ['이름', '전화번호']
                     buf2 = io.BytesIO()
                     with pd.ExcelWriter(buf2, engine='xlsxwriter') as w: k_df.to_excel(w, index=False)
                     st.download_button("🟡 카카오 업로드용", data=buf2, file_name=f"{selected_farmer}_카카오.xlsx")
                 with c_d3:
-                    # [수정] final_phone_col 대신 'clean_phone' 사용
-                    s_df = final_df[[buyer_name_col, 'clean_phone']].copy()
+                    s_df = selected_df[[buyer_name_col, 'clean_phone']].copy()
                     s_df.columns = ['이름', '휴대폰번호']
                     buf3 = io.BytesIO()
                     with pd.ExcelWriter(buf3, engine='xlsxwriter') as w: s_df.to_excel(w, index=False)
                     st.download_button("🟢 행복ICT 업로드용", data=buf3, file_name=f"{selected_farmer}_문자.xlsx")
-                    
-                st.dataframe(final_df, use_container_width=True)
             else:
-                st.warning("매칭된 연락처가 없습니다.")
+                st.warning("선택된 사람이 없습니다.")
 
         with tab2:
-            st.subheader(f"🚀 '{selected_farmer}'님 소식 보내기")
+            st.subheader(f"🚀 선택된 {len(selected_df)}명에게 보내기")
             
             if not api_key or not api_secret or not sender_number:
                 st.error("👈 왼쪽 사이드바에 'API Key', 'Secret', '발신번호'를 입력해주세요!")
-            elif len(final_df) == 0:
-                st.warning("발송할 대상이 없습니다.")
+            elif len(selected_df) == 0:
+                st.warning("선택된 대상이 없습니다.")
             else:
                 col_msg, col_preview = st.columns([1, 1])
-                
                 with col_msg:
-                    msg_content = st.text_area("💌 메시지 내용 (90바이트 초과 시 장문 자동 전환)", height=200,
-                                               placeholder=f"안녕하세요, {selected_farmer}입니다.\n오늘 신선한 {selected_item}가 입고되었습니다!")
+                    msg_content = st.text_area("💌 메시지 내용", height=150,
+                                               placeholder=f"안녕하세요, {selected_farmer}입니다.")
                     st.info(f"📤 **발신번호:** {sender_number}")
-                    st.caption("주의: 실제 발송되며 비용이 발생합니다.")
 
                 with col_preview:
                     st.markdown("#### 📱 미리보기")
                     st.code(msg_content if msg_content else "(내용을 입력하세요)")
-                    st.warning(f"💰 예상 비용: 약 **{len(final_df) * 20:,}원**")
+                    st.warning(f"💰 예상 비용: 약 **{len(selected_df) * 20:,}원**")
 
                 st.markdown("---")
-                
                 send_col1, send_col2 = st.columns([1, 3])
                 with send_col1:
                     test_phone = st.text_input("테스트 발송 번호", placeholder="01012345678")
@@ -293,25 +287,24 @@ else:
                         if not test_phone: st.error("번호를 입력하세요.")
                         else:
                             success, res = send_coolsms_direct(api_key, api_secret, sender_number, test_phone, msg_content)
-                            if success: st.success(f"✅ 전송 성공! ({res.get('groupInfo', {}).get('log', 'OK')})")
+                            if success: st.success("✅ 전송 성공!")
                             else: st.error(f"❌ 전송 실패: {res}")
 
                 with send_col2:
                     st.write("") 
                     st.write("") 
-                    if st.button(f"🚀 **진짜로 {len(final_df)}명에게 전체 발송**", type="primary"):
+                    # 진짜 발송 버튼
+                    if st.button(f"🚀 **선택한 {len(selected_df)}명에게 전체 발송**", type="primary"):
                         if not msg_content:
                             st.error("메시지 내용을 입력하세요!")
                         else:
                             progress_bar = st.progress(0)
-                            targets = final_df['clean_phone'].tolist()
+                            targets = selected_df['clean_phone'].tolist()
                             success_cnt = 0
-                            
                             for i, phone in enumerate(targets):
-                                time.sleep(0.1) # 속도 조금 상향
+                                time.sleep(0.1)
                                 suc, _ = send_coolsms_direct(api_key, api_secret, sender_number, phone, msg_content)
                                 if suc: success_cnt += 1
                                 progress_bar.progress((i + 1) / len(targets))
-                            
-                            st.success(f"🎉 **발송 완료!** (총 {len(targets)}건 중 {success_cnt}건 성공)")
+                            st.success(f"🎉 **총 {success_cnt}건 성공!**")
                             st.balloons()
