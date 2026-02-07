@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import os
-import re
+import re # 정규표현식
 
 # ==========================================
 # 1. [기본 설정]
@@ -12,7 +12,7 @@ st.set_page_config(page_title="품앗이마을 관계망", page_icon="🤝", lay
 with st.sidebar:
     st.header("🔒 품앗이님 확인")
     password = st.text_input("비밀번호", type="password")
-    if password != "poom0118**":
+    if password != "poomasi2026":
         st.warning("비밀번호를 입력해주세요.")
         st.stop()
     st.success("환영합니다, 후니님!")
@@ -92,7 +92,6 @@ else:
     farmer_col = next((c for c in cols if any(x in c for x in ['농가', '공급자', '생산자'])), None)
     buyer_name_col = next((c for c in cols if any(x in c for x in ['회원', '구매자', '성명', '이름'])), None)
     buyer_id_col = next((c for c in cols if any(x in c for x in ['회원번호', '조합원번호', '번호'])), None)
-    # [추가] 상품 컬럼 찾기
     item_col = next((c for c in cols if any(x in c for x in ['상품', '품목', '품명'])), None)
 
     if not farmer_col or not buyer_name_col:
@@ -108,30 +107,24 @@ else:
             filtered_farmers = [f for f in all_farmers if search_query in str(f)] if search_query else all_farmers
             selected_farmer = st.selectbox("농가 선택", filtered_farmers)
         
-        # 2. [신규 기능] 품목 선택
+        # 2. 품목 선택
         farmer_df_full = df_sales[df_sales[farmer_col] == selected_farmer].copy()
-        
         with c2:
             if item_col:
-                # 그 농가가 판 상품 리스트 추출
                 all_items = farmer_df_full[item_col].value_counts().index.tolist()
-                # '전체 보기' 옵션 추가
                 item_options = ["전체 상품 보기"] + all_items
-                selected_item = st.selectbox("📦 품목 선택 (특정 상품만 볼까요?)", item_options)
+                selected_item = st.selectbox("📦 품목 선택", item_options)
             else:
                 selected_item = "전체 상품 보기"
-                st.warning("상품명 컬럼을 찾을 수 없어 전체 내역만 표시합니다.")
 
-        # 3. 데이터 필터링 (품목 선택 반영)
+        # 3. 데이터 필터링
         if selected_item != "전체 상품 보기":
             target_df = farmer_df_full[farmer_df_full[item_col] == selected_item].copy()
-            st.info(f"👉 **'{selected_item}'** 구매자만 추려냈습니다.")
         else:
             target_df = farmer_df_full
             
-        # 4. 집계 및 매칭 로직 (기존과 동일)
+        # 4. 집계 및 매칭
         group_key = buyer_id_col if buyer_id_col else buyer_name_col
-        
         if buyer_id_col:
             loyal_fans = target_df.groupby(group_key).agg({buyer_name_col: 'first', group_key: 'count'}).rename(columns={group_key: '구매횟수'}).reset_index()
             loyal_fans['join_key'] = loyal_fans[buyer_id_col].astype(str).str.replace('.0', '').str.strip()
@@ -167,7 +160,7 @@ else:
                 except: loyal_fans[final_phone_col] = "-"
         else: loyal_fans[final_phone_col] = "-"
 
-        # 전화번호 포맷팅
+        # 전화번호 포맷팅 (카카오 규격 010-0000-0000)
         def format_phone(p):
             p = re.sub(r'[^0-9]', '', str(p))
             if p.startswith('10') and len(p)>=10: p = '0'+p
@@ -188,10 +181,27 @@ else:
         st.markdown("---")
         st.subheader(f"✅ '{selected_farmer}' - '{selected_item}' 구매 품앗이님 ({len(final_df)}명)")
         
-        col1, col2 = st.columns([2, 1])
-        with col1: st.dataframe(final_df, use_container_width=True, hide_index=True)
-        with col2:
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer: final_df.to_excel(writer, index=False)
-            fname = f"{selected_farmer}_{selected_item}_명단.xlsx".replace("/", "_")
-            st.download_button("📥 엑셀 받기", data=buffer, file_name=fname)
+        # [핵심] 엑셀 다운로드 버튼 분리
+        col_down1, col_down2 = st.columns(2)
+        
+        # 1. 일반 분석용 파일
+        with col_down1:
+            buffer1 = io.BytesIO()
+            with pd.ExcelWriter(buffer1, engine='xlsxwriter') as writer: final_df.to_excel(writer, index=False)
+            st.download_button("📥 분석용 엑셀 (상세)", data=buffer1, file_name=f"{selected_farmer}_{selected_item}_상세.xlsx")
+            
+        # 2. 카카오 업로드 전용 파일 (컬럼명 변경: 이름, 전화번호)
+        with col_down2:
+            kakao_df = final_df[[buyer_name_col, final_phone_col]].copy()
+            # 카카오가 좋아하는 컬럼명으로 강제 변경
+            kakao_df.columns = ['이름', '전화번호'] 
+            
+            buffer2 = io.BytesIO()
+            with pd.ExcelWriter(buffer2, engine='xlsxwriter') as writer: 
+                kakao_df.to_excel(writer, index=False)
+            
+            st.download_button("🟡 **카카오 업로드용** (바로 올리세요)", data=buffer2, file_name=f"{selected_farmer}_카카오업로드용.xlsx")
+
+        # 미리보기
+        st.caption("👇 분석 결과 미리보기")
+        st.dataframe(final_df, use_container_width=True, hide_index=True)
