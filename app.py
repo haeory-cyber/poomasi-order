@@ -11,7 +11,7 @@ with st.sidebar:
     st.header("🔒 품앗이님 확인")
     password = st.text_input("조합원 비밀번호를 입력하세요", type="password")
     
-    if password != "poomasi2026":  # 원하는 비밀번호로 변경 가능
+    if password != "poom0118**":  # 원하는 비밀번호로 변경 가능
         st.warning("비밀번호를 입력해야 입장할 수 있습니다.")
         st.stop()  # 여기서 코드 실행을 멈춥니다 (데이터 보호)
     
@@ -23,20 +23,16 @@ with st.sidebar:
 # 2. [데이터 로드] 안전하게 읽어오기
 # ==========================================
 @st.cache_data
+@st.cache_data
 def load_data():
-    # 깃허브에 올려둔 파일 이름을 정확히 적어야 합니다.
-    # sales.xlsx가 없다면 오류가 날 수 있으니 파일명 확인 필수!
     try:
-        # 데이터가 너무 많으면 상위 데이터만 읽거나 가볍게 처리
-        df = pd.read_excel('sales.xlsx') 
+        # engine='openpyxl'을 명시적으로 적어주면 더 확실합니다.
+        df = pd.read_excel('sales.xlsx', engine='openpyxl')
         return df
-    except:
-        return None
-
-df = load_data()
-
-# ==========================================
-# 3. [화면 구성] 로컬푸드 2.0 철학 입히기
+    except Exception as e:
+        # [시다의 처방] 에러 내용을 숨기지 말고 화면에 보여줘라!
+        st.error(f"🚨 상세 에러 내용: {e}")
+        return None 2.0 철학 입히기
 # ==========================================
 
 # 메인 헤더
