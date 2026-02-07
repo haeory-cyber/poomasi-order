@@ -8,7 +8,7 @@ import hmac
 import hashlib
 import uuid
 import datetime
-import requests # 기본 통신 도구
+import requests # 쿨에스엠에스 없이 직접 보내는 도구
 
 # ==========================================
 # 0. [내장함수] 쿨에스엠에스 직접 연결 (설치X)
@@ -245,13 +245,15 @@ else:
                     with pd.ExcelWriter(buffer1, engine='xlsxwriter') as writer: final_df.to_excel(writer, index=False)
                     st.download_button("📥 분석용 엑셀 (상세)", data=buffer1, file_name=f"{selected_farmer}_상세.xlsx")
                 with c_d2:
-                    k_df = final_df[[buyer_name_col, final_phone_col]].copy()
+                    # [수정] final_phone_col 대신 'clean_phone' 사용
+                    k_df = final_df[[buyer_name_col, 'clean_phone']].copy()
                     k_df.columns = ['이름', '전화번호']
                     buf2 = io.BytesIO()
                     with pd.ExcelWriter(buf2, engine='xlsxwriter') as w: k_df.to_excel(w, index=False)
                     st.download_button("🟡 카카오 업로드용", data=buf2, file_name=f"{selected_farmer}_카카오.xlsx")
                 with c_d3:
-                    s_df = final_df[[buyer_name_col, final_phone_col]].copy()
+                    # [수정] final_phone_col 대신 'clean_phone' 사용
+                    s_df = final_df[[buyer_name_col, 'clean_phone']].copy()
                     s_df.columns = ['이름', '휴대폰번호']
                     buf3 = io.BytesIO()
                     with pd.ExcelWriter(buf3, engine='xlsxwriter') as w: s_df.to_excel(w, index=False)
@@ -306,8 +308,7 @@ else:
                             success_cnt = 0
                             
                             for i, phone in enumerate(targets):
-                                # 0.5초 딜레이 (안전장치)
-                                time.sleep(0.5)
+                                time.sleep(0.1) # 속도 조금 상향
                                 suc, _ = send_coolsms_direct(api_key, api_secret, sender_number, phone, msg_content)
                                 if suc: success_cnt += 1
                                 progress_bar.progress((i + 1) / len(targets))
