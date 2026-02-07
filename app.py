@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import os
+import re # 정규표현식 (전화번호 수술 도구)
 
 # ==========================================
 # 1. [기본 설정]
@@ -19,46 +20,39 @@ with st.sidebar:
     st.markdown("---")
     st.header("📂 데이터 업로드")
     
-    # [핵심 기능] 파일 업로더 추가
-    st.info("👇 포스에서 받은 파일을 여기에 넣으세요!")
-    uploaded_sales = st.file_uploader("1️⃣ 판매 내역 (직매장 농가별 판매)", type=['xlsx', 'csv'])
+    st.info("👇 포스 파일(판매내역)을 여기에 넣으세요!")
+    uploaded_sales = st.file_uploader("1️⃣ 판매 내역 (직매장...)", type=['xlsx', 'csv'])
     
     st.markdown("---")
     uploaded_member = st.file_uploader("2️⃣ 조합원 명부 (선택사항)", type=['xlsx', 'csv'])
     
-    # 로컬 파일 자동 감지 (업로드 안 했을 때 사용)
     local_files = os.listdir('.')
     local_member = next((f for f in local_files if any(k in f for k in ['member', '조합원', '명부'])), None)
     
     if not uploaded_member and local_member:
-        st.caption(f"ℹ️ 업로드된 명부가 없어 서버에 있는 '{local_member}'를 사용합니다.")
+        st.caption(f"ℹ️ 서버에 있는 '{local_member}'를 사용합니다.")
 
 # ==========================================
-# 2. [데이터 로드] 스마트 업로더 (업로드 파일 처리)
+# 2. [데이터 로드] 스마트 업로더
 # ==========================================
 @st.cache_data
 def load_data_from_upload(file_obj, type='sales'):
     if file_obj is None: return None, "파일 없음"
     
-    # 1. 엑셀/CSV 강제 읽기
     df_raw = None
-    
-    # 엑셀 시도
     try:
         df_raw = pd.read_excel(file_obj, header=None, engine='openpyxl')
     except:
-        # CSV 시도 (인코딩 3대장)
         for enc in ['utf-8', 'cp949', 'euc-kr']:
             try:
-                file_obj.seek(0) # 파일 포인터 초기화 (중요!)
+                file_obj.seek(0)
                 df_raw = pd.read_csv(file_obj, header=None, encoding=enc, on_bad_lines='skip', engine='python')
                 if not df_raw.empty: break
             except: continue
     
     if df_raw is None or df_raw.empty: 
-        return None, "파일을 읽을 수 없습니다. (암호화되었거나 손상됨)"
+        return None, "파일을 읽을 수 없습니다."
 
-    # 2. 헤더 찾기 (키워드 기반)
     if type == 'sales':
         targets = ['농가', '생산자', '공급자']
         must_have = ['상품', '품목', '품명', '회원', '구매자'] 
@@ -73,7 +67,6 @@ def load_data_from_upload(file_obj, type='sales'):
             target_idx = idx
             break
     
-    # 3. 데이터 정리
     if target_idx != -1:
         df_final = df_raw.iloc[target_idx+1:].copy()
         df_final.columns = df_raw.iloc[target_idx]
@@ -86,19 +79,15 @@ def load_data_from_upload(file_obj, type='sales'):
 # ==========================================
 # [데이터 로드 실행]
 # ==========================================
-# 1. 판매 데이터 로드
 if uploaded_sales:
     df_sales, msg_sales = load_data_from_upload(uploaded_sales, 'sales')
 else:
     df_sales, msg_sales = None, "파일을 업로드해주세요."
 
-# 2. 명부 데이터 로드 (업로드 우선, 없으면 로컬 파일)
 if uploaded_member:
     df_member, msg_member = load_data_from_upload(uploaded_member, 'member')
 elif local_member:
-    # 로컬 파일 읽기 (기존 방식 재활용)
     with open(local_member, 'rb') as f:
-        # BytesIO로 변환하여 업로더 로직과 통일
         file_content = io.BytesIO(f.read())
         df_member, msg_member = load_data_from_upload(file_content, 'member')
 else:
@@ -113,15 +102,12 @@ if df_sales is None:
     st.info("👈 **왼쪽 사이드바**에서 판매 내역 파일을 업로드해주세요.")
 else:
     cols = df_sales.columns.tolist()
-    
-    # 컬럼 자동 감지
     farmer_col = next((c for c in cols if any(x in c for x in ['농가', '공급자', '생산자'])), None)
     buyer_name_col = next((c for c in cols if any(x in c for x in ['회원', '구매자', '성명', '이름'])), None)
     buyer_id_col = next((c for c in cols if any(x in c for x in ['회원번호', '조합원번호', '번호'])), None)
     
     if not farmer_col or not buyer_name_col:
         st.error("🚨 판매 데이터에서 필수 컬럼(농가명, 회원명)을 찾지 못했습니다.")
-        st.write("인식된 컬럼:", cols)
     else:
         # 농가 선택
         farmer_counts = df_sales[farmer_col].value_counts()
@@ -160,7 +146,7 @@ else:
                 mem_name_auto = next((c for c in mem_cols if any(x in c for x in ['회원명', '성명', '이름'])), None)
                 mem_phone_auto = next((c for c in mem_cols if any(x in c for x in ['휴대전화', '전화', '연락처', 'HP'])), None)
                 
-                with st.expander("🛠️ 명부 매칭 설정 (필요시 클릭)", expanded=False):
+                with st.expander("🛠️ 명부 매칭 설정", expanded=False):
                     c1, c2, c3 = st.columns(3)
                     with c1:
                         match_mode = st.radio("매칭 기준", ["회원번호", "이름"], index=0 if (buyer_id_col and mem_id_auto) else 1)
@@ -177,7 +163,6 @@ else:
                         phone_book = df_member[[sel_key_mem, sel_phone]].copy()
                         def clean_key(x): return str(x).replace('.0', '').strip()
                         phone_book['join_key'] = phone_book[sel_key_mem].apply(clean_key)
-                        # 중복 제거 (첫번째 값 유지 -> 1:1 매칭)
                         phone_book = phone_book.drop_duplicates(subset=['join_key'], keep='first')
                         
                         merged = pd.merge(loyal_fans, phone_book[['join_key', sel_phone]], on='join_key', how='left')
@@ -191,7 +176,34 @@ else:
                  loyal_fans[final_phone_col] = "-"
 
             # ========================================================
-            # 3. [핵심] 순도 100% 정제 (조합원만 남기기)
+            # 3. [핵심] 전화번호 성형수술 (010-XXXX-XXXX 포맷팅)
+            # ========================================================
+            def format_phone_number(phone):
+                if pd.isna(phone) or phone == '-' or phone == '': return '-'
+                # 1. 숫자만 남기기 (010-1234-5678 -> 01012345678)
+                clean_num = re.sub(r'[^0-9]', '', str(phone))
+                
+                # 2. 앞자리 0이 빠진 경우 (1012345678 -> 01012345678)
+                if clean_num.startswith('10') and len(clean_num) >= 10:
+                    clean_num = '0' + clean_num
+                
+                # 3. 규격에 맞게 하이픈 넣기
+                if len(clean_num) == 11: # 010-1234-5678
+                    return f"{clean_num[:3]}-{clean_num[3:7]}-{clean_num[7:]}"
+                elif len(clean_num) == 10: 
+                    if clean_num.startswith('02'): # 서울 02-1234-5678
+                        return f"{clean_num[:2]}-{clean_num[2:6]}-{clean_num[6:]}"
+                    else: # 011-123-4567
+                        return f"{clean_num[:3]}-{clean_num[3:6]}-{clean_num[6:]}"
+                else:
+                    return phone # 변환 불가하면 원본 리턴 (확인용)
+
+            # 포맷팅 적용
+            if final_phone_col in loyal_fans.columns:
+                loyal_fans[final_phone_col] = loyal_fans[final_phone_col].apply(format_phone_number)
+
+            # ========================================================
+            # 4. [핵심] 순도 100% 정제 (조합원만 남기기)
             # ========================================================
             
             # A. 엄격 필터링: 연락처 없는 사람(비회원) 제외
@@ -213,9 +225,9 @@ else:
             st.subheader(f"✅ '{selected_farmer}'님의 진짜 품앗이님 ({total_cleaned}명)")
             
             if total_cleaned > 0:
-                st.success(f"✨ 명부와 정확히 일치하는 조합원 **{total_cleaned}명**을 찾았습니다.")
+                st.success(f"✨ 명부와 정확히 일치하는 조합원 **{total_cleaned}명**을 찾았습니다. (전화번호 자동 보정 완료)")
             else:
-                st.warning("⚠️ 매칭된 조합원이 없습니다. (파일 날짜나 매칭 설정을 확인해주세요)")
+                st.warning("⚠️ 매칭된 조합원이 없습니다.")
             
             col1, col2 = st.columns([2, 1])
             with col1:
