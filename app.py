@@ -11,7 +11,7 @@ st.set_page_config(page_title="품앗이마을 관계망", page_icon="🤝", lay
 with st.sidebar:
     st.header("🔒 품앗이님 확인")
     password = st.text_input("비밀번호", type="password")
-    if password != "poomasi2026":
+    if password != "poom0118**":
         st.warning("비밀번호를 입력해주세요.")
         st.stop()
     st.success("환영합니다, 후니님!")
