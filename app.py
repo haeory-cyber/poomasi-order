@@ -65,19 +65,54 @@ with st.sidebar:
     uploaded_member = st.file_uploader("👉 '회원관리(최신전체).xlsx' 업로드", type=['xlsx', 'csv'], key='member')
 
 # ==========================================
-# 2. [데이터 로드] - 로직 단순화 (헤더 자동탐색 제거)
+# 2. [데이터 로드] - 스마트 헤더 감지 기능 탑재
 # ==========================================
 @st.cache_data
 def load_data_from_upload(file_obj, type='sales'):
     if file_obj is None: return None, "파일 없음"
     df_raw = None
-    try: df_raw = pd.read_excel(file_obj, engine='openpyxl') # 헤더 자동 (1행)
+    
+    # 1. 일단 파일 읽기 (헤더 없이 전체)
+    try: df_raw = pd.read_excel(file_obj, header=None, engine='openpyxl')
     except:
-        try: df_raw = pd.read_csv(file_obj, encoding='utf-8')
-        except: 
-            try: df_raw = pd.read_csv(file_obj, encoding='cp949')
-            except: return None, "읽기 실패"
-    return df_raw, None
+        try:
+            file_obj.seek(0)
+            df_raw = pd.read_csv(file_obj, header=None, encoding='utf-8')
+        except: return None, "읽기 실패"
+
+    # 2. '진짜 헤더' 행 찾기 (Unnamed 제거 작전)
+    # 후니님이 알려주신 핵심 키워드들이 포함된 행을 찾습니다.
+    if type == 'sales':
+        keywords = ['농가', '공급자', '생산자', '상품', '품목']
+    else:
+        # 명부 파일 핵심 키워드: 이름, 휴대전화, 회원번호
+        keywords = ['회원번호', '이름', '휴대전화', '전화번호', '주소']
+
+    target_row_idx = -1
+    
+    # 위에서부터 20줄만 검사해서 '키워드'가 있는 줄을 찾아냅니다.
+    for idx, row in df_raw.head(20).iterrows():
+        row_str = row.astype(str).str.cat(sep=' ')
+        # 키워드 중 2개 이상이 포함된 줄을 진짜 헤더로 간주
+        match_cnt = sum(1 for k in keywords if k in row_str)
+        if match_cnt >= 2:
+            target_row_idx = idx
+            break
+            
+    if target_row_idx != -1:
+        # 헤더를 찾았으면 그 줄부터 다시 정제해서 가져옴
+        df_final = df_raw.iloc[target_row_idx+1:].copy()
+        df_final.columns = df_raw.iloc[target_row_idx] # 그 줄을 컬럼명으로!
+        
+        # 컬럼명 공백/줄바꿈 제거 (깔끔하게)
+        df_final.columns = df_final.columns.astype(str).str.replace(' ', '').str.replace('\n', '')
+        
+        # 'Unnamed' 로 시작하는 이상한 컬럼은 삭제
+        df_final = df_final.loc[:, ~df_final.columns.str.contains('^Unnamed')]
+        return df_final, None
+    else:
+        # 헤더를 못 찾았으면 (혹시 모르니) 그냥 원본 반환
+        return df_raw, "헤더 못 찾음"
 
 # ==========================================
 # 3. [메인 로직]
@@ -101,15 +136,14 @@ if "판매 데이터" in mode:
     if df_sales is None:
         st.info("👈 **왼쪽 사이드바** 1번에 [판매 내역] 파일을 업로드해주세요.")
     else:
-        # 컬럼 자동 찾기 (여기는 기존 유지)
         cols = df_sales.columns.tolist()
+        # 판매내역 컬럼 자동 감지
         farmer_col = next((c for c in cols if any(x in c for x in ['농가', '공급자', '생산자'])), None)
         buyer_name_col = next((c for c in cols if any(x in c for x in ['회원', '구매자', '성명', '이름'])), None)
         item_col = next((c for c in cols if any(x in c for x in ['상품', '품목', '품명'])), None)
 
         if not farmer_col or not buyer_name_col:
             st.error("🚨 판매 내역 형식을 인식할 수 없습니다. (헤더가 1행에 있나요?)")
-            st.write("감지된 컬럼들:", cols)
         else:
             all_farmers = df_sales[farmer_col].value_counts().index.tolist()
             c1, c2 = st.columns([1, 1])
@@ -136,26 +170,19 @@ if "판매 데이터" in mode:
             loyal_fans['join_key'] = loyal_fans[buyer_name_col].astype(str).str.strip()
             loyal_fans = loyal_fans.sort_values(by='구매횟수', ascending=False)
             
-            # [수정] 명부 매칭 로직 보강
+            # 매칭 로직 (판매데이터 모드)
             final_phone_col = '연락처'
             if df_member is not None:
-                # 명부 컬럼 수동 선택 가능하게 (Expander)
-                with st.expander("🛠️ 명부 매칭 설정 (전화번호가 안 뜨면 클릭)", expanded=False):
-                    m_cols = df_member.columns.tolist()
-                    st.write("현재 명부 컬럼:", m_cols)
-                    # 자동 추천
-                    auto_name = next((c for c in m_cols if any(x in c for x in ['회원명', '성명', '이름'])), m_cols[0])
-                    auto_phone = next((c for c in m_cols if any(x in c for x in ['휴대전화', '전화', '연락처'])), m_cols[-1])
-                    
-                    sel_name = st.selectbox("명부에서 '이름' 컬럼 선택", m_cols, index=m_cols.index(auto_name))
-                    sel_phone = st.selectbox("명부에서 '전화번호' 컬럼 선택", m_cols, index=m_cols.index(auto_phone))
-
-                if sel_name and sel_phone:
-                    phone_book = df_member[[sel_name, sel_phone]].copy()
+                m_cols = df_member.columns.tolist()
+                # 명부에서 이름/전화번호 자동 찾기
+                auto_name = next((c for c in m_cols if any(x in c for x in ['이름', '회원명', '성명'])), None)
+                auto_phone = next((c for c in m_cols if any(x in c for x in ['휴대전화', '전화', '연락처', '이동전화'])), None)
+                
+                if auto_name and auto_phone:
+                    phone_book = df_member[[auto_name, auto_phone]].copy()
                     phone_book.columns = ['join_key', final_phone_col]
                     phone_book['join_key'] = phone_book['join_key'].astype(str).str.strip()
                     phone_book = phone_book.drop_duplicates(subset=['join_key'], keep='first')
-                    
                     merged = pd.merge(loyal_fans, phone_book, on='join_key', how='left')
                     merged[final_phone_col] = merged[final_phone_col].fillna("-")
                     loyal_fans = merged
@@ -171,60 +198,61 @@ if "판매 데이터" in mode:
                 final_df.columns = ['이름', '전화번호', '비고']
 
 # ------------------------------------------------
-# [모드 2] 전체 명부 검색 (Manual Override 추가)
+# [모드 2] 전체 명부 검색 (완전 개선)
 # ------------------------------------------------
 else:
     if df_member is None:
         st.info("👈 **왼쪽 사이드바** 2번에 [회원관리(최신전체).xlsx] 파일을 올려주세요.")
     else:
-        st.success(f"📂 명부 로드 완료! (총 {len(df_member):,}명)")
+        st.success(f"📂 명부 인식 완료! (총 {len(df_member):,}명)")
         
-        # [핵심] 컬럼 수동 선택 기능 추가
-        with st.expander("🚨 검색이 안 되나요? (여기를 눌러 컬럼을 확인하세요)", expanded=True):
-            st.caption("엑셀 파일의 첫 5줄입니다. '이름'과 '전화번호'가 있는 열을 직접 골라주세요.")
-            st.dataframe(df_member.head())
-            
-            all_cols = df_member.columns.tolist()
-            
-            # 자동 선택 시도
-            auto_n = next((c for c in all_cols if any(x in c for x in ['회원명', '성명', '이름', '조합원명'])), all_cols[0])
-            auto_p = next((c for c in all_cols if any(x in c for x in ['휴대전화', '전화', '연락처', '이동전화', 'HP'])), all_cols[-1])
-            
+        # [자동 감지] 후니님이 알려준 순서대로 컬럼이 있을 확률이 높음
+        # 회원번호/이름/휴대전화번소...
+        all_cols = df_member.columns.tolist()
+        
+        # 이름, 전화번호 컬럼 자동 찾기
+        target_name_col = next((c for c in all_cols if any(x in c for x in ['이름', '회원명', '성명'])), None)
+        target_phone_col = next((c for c in all_cols if any(x in c for x in ['휴대전화', '전화', '연락처', '이동전화'])), None)
+
+        # 혹시 못 찾았을 경우를 대비한 수동 선택창
+        with st.expander("🛠️ 컬럼 확인/변경 (이름과 전화번호 열이 맞나요?)", expanded=(target_name_col is None)):
+            st.dataframe(df_member.head(3)) # 상위 3줄 보여줌
             c_sel1, c_sel2 = st.columns(2)
             with c_sel1:
-                target_name_col = st.selectbox("👉 '이름' 열 선택", all_cols, index=all_cols.index(auto_n))
+                target_name_col = st.selectbox("👉 '이름' 열", all_cols, index=all_cols.index(target_name_col) if target_name_col else 0)
             with c_sel2:
-                target_phone_col = st.selectbox("👉 '전화번호' 열 선택", all_cols, index=all_cols.index(auto_p))
+                target_phone_col = st.selectbox("👉 '전화번호' 열", all_cols, index=all_cols.index(target_phone_col) if target_phone_col else 0)
 
         # 검색 로직
         c_s1, c_s2 = st.columns([3, 1])
         with c_s1:
-            search_keyword = st.text_input("🔍 이름 또는 전화번호 검색", placeholder="예: 김성훈")
+            search_keyword = st.text_input("🔍 이름 또는 전화번호 뒷자리 검색", placeholder="예: 김성훈 (빈칸이면 전체 보기)")
         
-        # 데이터 준비
-        df_search = df_member[[target_name_col, target_phone_col]].copy()
-        df_search.columns = ['이름', '전화번호']
-        # 공백 제거 (이름에 공백 있는 경우 대비)
-        df_search['이름'] = df_search['이름'].astype(str).str.replace(' ', '')
-        df_search['전화번호'] = df_search['전화번호'].apply(clean_phone_number)
-        
-        # 필터링
-        if search_keyword:
-            clean_keyword = search_keyword.replace(' ', '') # 검색어도 공백 제거
-            mask = df_search['이름'].str.contains(clean_keyword) | df_search['전화번호'].str.contains(clean_keyword)
-            filtered_result = df_search[mask].copy()
-            st.info(f"🔎 '{search_keyword}' 검색 결과: {len(filtered_result)}명")
-        else:
-            filtered_result = df_search.head(100).copy()
-            st.caption("검색어가 없어서 상위 100명만 보여줍니다.")
-
-        if not filtered_result.empty:
-            filtered_result['비고'] = "직접검색"
-            final_df = filtered_result
-            sender_name_default = "품앗이마을"
-        else:
+        if target_name_col and target_phone_col:
+            # 데이터 준비
+            df_search = df_member[[target_name_col, target_phone_col]].copy()
+            df_search.columns = ['이름', '전화번호']
+            df_search['이름'] = df_search['이름'].astype(str).str.replace(' ', '') # 이름 공백 제거
+            df_search['전화번호'] = df_search['전화번호'].apply(clean_phone_number)
+            
+            # 필터링
             if search_keyword:
-                st.warning("검색 결과가 없습니다. (위쪽 '컬럼 설정'에서 열을 제대로 선택했는지 확인해보세요!)")
+                clean_keyword = search_keyword.replace(' ', '')
+                mask = df_search['이름'].str.contains(clean_keyword) | df_search['전화번호'].str.contains(clean_keyword)
+                filtered_result = df_search[mask].copy()
+                st.info(f"🔎 '{search_keyword}' 검색 결과: {len(filtered_result)}명")
+            else:
+                filtered_result = df_search.head(100).copy()
+                st.caption("검색어가 없어서 상위 100명만 보여줍니다.")
+
+            if not filtered_result.empty:
+                filtered_result['비고'] = "직접검색"
+                final_df = filtered_result
+                sender_name_default = "품앗이마을"
+            else:
+                if search_keyword: st.warning("검색 결과가 없습니다.")
+        else:
+            st.error("컬럼을 찾을 수 없습니다. 위 설정에서 선택해주세요.")
 
 # ------------------------------------------------
 # [공통] 결과 출력
