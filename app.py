@@ -19,10 +19,8 @@ with st.sidebar:
     st.markdown("---")
     st.caption("📂 파일 점검")
     files = os.listdir('.')
-    
     if any('sales_raw' in f for f in files): st.success("✅ 판매 데이터 있음")
     else: st.error("❌ 판매 데이터 없음")
-        
     if any('member' in f for f in files): st.success("✅ 조합원 명부 있음")
     else: st.error("❌ 조합원 명부 없음")
 
@@ -30,7 +28,7 @@ with st.sidebar:
 # 2. [데이터 로드] 스마트 로더
 # ==========================================
 @st.cache_data
-def load_smart_data_v8(keyword, type='sales'):
+def load_smart_data_v9(keyword, type='sales'):
     files = os.listdir('.')
     candidates = [f for f in files if keyword in f]
     if not candidates: return None, "파일 없음"
@@ -69,19 +67,14 @@ def load_smart_data_v8(keyword, type='sales'):
             if target_idx != -1:
                 df_final = df_raw.iloc[target_idx+1:].copy()
                 df_final.columns = df_raw.iloc[target_idx]
-                # 컬럼 공백 제거
                 df_final.columns = df_final.columns.astype(str).str.replace(' ', '').str.replace('\n', '')
-                # Unnamed 삭제
                 df_final = df_final.loc[:, ~df_final.columns.str.contains('^Unnamed')]
                 return df_final, None
-                
         except: continue
-
     return None, "읽기 실패"
 
-# 데이터 로드
-df_sales, err_sales = load_smart_data_v8('sales_raw', type='sales')
-df_member, err_member = load_smart_data_v8('member', type='member')
+df_sales, err_sales = load_smart_data_v9('sales_raw', type='sales')
+df_member, err_member = load_smart_data_v9('member', type='member')
 
 # ==========================================
 # 3. [메인 화면]
@@ -117,16 +110,17 @@ else:
             loyal_fans = farmer_df.groupby(buyer_col).size().reset_index(name='구매횟수')
             loyal_fans = loyal_fans.sort_values(by='구매횟수', ascending=False)
             
-            # 2. 명부 매칭 (강력한 세탁 과정 포함)
+            # [강제 생성] 연락처 컬럼을 일단 빈칸으로라도 만듭니다.
             final_phone_col = '연락처'
+            loyal_fans[final_phone_col] = "-" 
             
+            # 2. 명부 매칭
             if df_member is not None and not df_member.empty:
                 mem_cols = df_member.columns.tolist()
                 
                 auto_name = next((c for c in mem_cols if any(x in c for x in ['회원', '성명', '이름'])), None)
                 auto_phone = next((c for c in mem_cols if any(x in c for x in ['휴대전화', '전화', '연락처', 'HP'])), None)
                 
-                # 매칭 UI
                 with st.expander("🛠️ 명부 매칭 설정 (클릭)", expanded=True):
                     c1, c2, c3 = st.columns(3)
                     with c1:
@@ -134,63 +128,30 @@ else:
                     with c2:
                         sel_phone_col = st.selectbox("전화번호 컬럼 (명부)", mem_cols, index=mem_cols.index(auto_phone) if auto_phone in mem_cols else 0)
                     with c3:
-                        # 진단 메시지
-                        if sel_name_col and sel_phone_col:
-                            sample_name = df_member[sel_name_col].iloc[0]
-                            st.write(f"👉 예시: {sample_name}")
+                        if sel_name_col:
+                            st.write(f"명부 이름 예시: {df_member[sel_name_col].iloc[0]}")
+                            st.write(f"판매 이름 예시: {loyal_fans[buyer_col].iloc[0]}")
 
-                # [핵심] 데이터 세탁 및 병합
                 if sel_name_col and sel_phone_col:
                     try:
-                        # A. 명부 준비 (공백 제거)
+                        # 데이터 준비
                         phone_book = df_member[[sel_name_col, sel_phone_col]].copy()
                         phone_book = phone_book.dropna(subset=[sel_name_col]).drop_duplicates(subset=[sel_name_col])
                         
-                        # [초강력] 모든 데이터를 문자로 바꾸고 공백 제거
-                        phone_book[sel_name_col] = phone_book[sel_name_col].astype(str).str.strip()
-                        loyal_fans['매칭용이름'] = loyal_fans[buyer_col].astype(str).str.strip()
+                        # [핵심] 공백 제거 후 병합
+                        phone_book['key_name'] = phone_book[sel_name_col].astype(str).str.strip()
+                        loyal_fans['key_name'] = loyal_fans[buyer_col].astype(str).str.strip()
                         
-                        # B. 병합 (LEFT JOIN)
-                        loyal_fans = pd.merge(loyal_fans, phone_book, left_on='매칭용이름', right_on=sel_name_col, how='left')
-                        loyal_fans.rename(columns={sel_phone_col: final_phone_col}, inplace=True)
+                        merged = pd.merge(loyal_fans, phone_book, on='key_name', how='left')
                         
-                        # C. 전화번호 데이터 정리 (010-0000-0000 형태 유지하되 .0 같은거 제거)
-                        if final_phone_col in loyal_fans.columns:
-                            loyal_fans[final_phone_col] = loyal_fans[final_phone_col].astype(str).str.replace('.0', '', regex=False)
-                            loyal_fans[final_phone_col] = loyal_fans[final_phone_col].replace('nan', '')
-                            
+                        # 연락처 업데이트
+                        loyal_fans[final_phone_col] = merged[sel_phone_col].fillna("-")
+                        
                     except Exception as e:
                         st.error(f"매칭 중 오류: {e}")
 
             # ------------------------------------------------
-            # 결과 출력
+            # 결과 출력 (무조건 연락처 포함)
             # ------------------------------------------------
             st.markdown("---")
-            st.subheader(f"✅ '{selected_farmer}'님의 단골 ({len(loyal_fans)}명)")
-            
-            # 매칭 실패 원인 분석용 (디버깅)
-            if final_phone_col in loyal_fans.columns:
-                success_count = loyal_fans[final_phone_col].ne('').sum()
-                st.caption(f"📞 연락처 확보 성공: **{success_count}명** / 전체 {len(loyal_fans)}명")
-                if success_count == 0:
-                    st.warning("⚠️ 연락처가 하나도 매칭되지 않았습니다. 이름이 서로 다르게 적혀있을 가능성이 큽니다.")
-                    st.write("판매데이터 이름 예시:", loyal_fans[buyer_col].head(3).tolist())
-                    st.write("명부 이름 예시:", df_member[sel_name_col].head(3).tolist() if df_member is not None else "없음")
-            
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                display_cols = [buyer_col, '구매횟수']
-                if final_phone_col in loyal_fans.columns:
-                    display_cols.insert(1, final_phone_col)
-                
-                st.dataframe(loyal_fans[display_cols], use_container_width=True, hide_index=True)
-                
-            with col2:
-                st.success("📂 **다운로드**")
-                buffer = io.BytesIO()
-                try: import xlsxwriter; engine='xlsxwriter'
-                except: engine='openpyxl'
-
-                with pd.ExcelWriter(buffer, engine=engine) as writer:
-                    loyal_fans.to_excel(writer, index=False)
-                st.download_button("📥 엑셀 받기", data=buffer, file_name=f"{selected_farmer}_단골.xlsx")
+            st.subheader(f"
