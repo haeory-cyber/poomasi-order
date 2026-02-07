@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import io
 import os
-import csv
 
 # ==========================================
 # 1. [기본 설정]
@@ -37,47 +36,39 @@ def load_smart_data_v2(target_name, type='sales'):
     except:
         pass
 
-    # B. CSV(텍스트)로 시도 - 한 줄씩 읽어서 헤더 찾기 (ParserError 방지)
+    # B. CSV(텍스트)로 시도
     encodings = ['utf-8', 'cp949', 'euc-kr']
     for enc in encodings:
         try:
-            # 파일을 텍스트로 엽니다 (표로 읽지 않음)
             with open(real_filename, 'r', encoding=enc) as f:
                 lines = f.readlines()
             
-            # 헤더 키워드 정의
             keywords = []
             if type == 'sales':
                 keywords = ['농가', '생산자', '상품', '품목', '공급자']
             elif type == 'member':
                 keywords = ['회원', '성명', '전화', '휴대폰', '연락처', '조합원', '이름']
             
-            # 텍스트 줄을 훑으며 헤더 위치 찾기
             header_row_idx = -1
-            for i, line in enumerate(lines[:50]): # 앞 50줄만 검사
+            for i, line in enumerate(lines[:50]):
                 if sum(k in line for k in keywords) >= 2:
                     header_row_idx = i
                     break
             
             if header_row_idx != -1:
-                # 헤더 위치를 찾았으면, 거기서부터 다시 DataFrame으로 읽음
-                # on_bad_lines='skip': 칸 수 안 맞는 줄은 건너뜀 (중요!)
                 df = pd.read_csv(real_filename, encoding=enc, header=header_row_idx, on_bad_lines='skip')
                 return clean_columns(df), None
             else:
-                # 헤더를 못 찾았으면 그냥 읽음
                 df = pd.read_csv(real_filename, encoding=enc, on_bad_lines='skip')
                 return clean_columns(df), None
                 
         except Exception as e:
-            continue # 다음 인코딩 시도
+            continue
 
-    return None, "모든 방식으로 읽기 실패 (파일이 손상되었거나 암호화됨)"
+    return None, "읽기 실패 (파일 손상 가능성)"
 
 def find_header_and_clean(df, type):
-    # 이미 DataFrame으로 읽힌 상태에서 헤더 찾기
     keywords = ['농가', '생산자', '상품', '품목'] if type == 'sales' else ['회원', '성명', '전화']
-    
     target_row = -1
     for idx in range(min(30, len(df))):
         row_str = df.iloc[idx].astype(str).str.cat(sep=' ')
@@ -107,7 +98,6 @@ st.title("🤝 생산자와 소비자를 잇는 '연결 고리'")
 
 if df_sales is None:
     st.error(f"🚨 판매 데이터 로드 실패: {err_sales}")
-    st.info("팁: 엑셀 파일을 열어서 '다른 이름으로 저장' > 'CSV(쉼표로 분리)' 형식으로 저장해서 올려보세요.")
 else:
     cols = df_sales.columns.tolist()
     
@@ -119,10 +109,10 @@ else:
     st.info(f"📊 **데이터 분석 상태** (농가 컬럼: `{farmer_col}` / 구매자 컬럼: `{buyer_col}`)")
 
     if not farmer_col or not buyer_col:
-        st.error("🚨 필수 컬럼(농가명, 구매자명)을 찾지 못했습니다.")
+        st.error("🚨 필수 컬럼을 찾지 못했습니다.")
         st.write("인식된 컬럼들:", cols)
     else:
-        # 1. 판매량 많은 순으로 농가 정렬
+        # 판매량 순 정렬
         farmer_counts = df_sales[farmer_col].value_counts()
         all_farmers = farmer_counts.index.tolist()
         
@@ -144,7 +134,6 @@ else:
             if farmer_df.empty:
                 st.warning("데이터 없음")
             else:
-                # 단골 집계
                 loyal_fans = farmer_df.groupby(buyer_col).size().reset_index(name='구매횟수')
                 loyal_fans = loyal_fans.sort_values(by='구매횟수', ascending=False)
                 
@@ -166,4 +155,26 @@ else:
                     if sales_phone:
                         phones = farmer_df[[buyer_col, sales_phone]].drop_duplicates(subset=[buyer_col], keep='last')
                         loyal_fans = pd.merge(loyal_fans, phones, on=buyer_col, how='left')
-                        loyal_fans.rename(columns={sales
+                        # [문제의 구간 수정 완료] 괄호 닫기 확인
+                        loyal_fans.rename(columns={sales_phone: final_phone_col}, inplace=True)
+                    else:
+                        loyal_fans[final_phone_col] = "번호없음"
+
+                # 결과 화면
+                st.markdown("---")
+                st.subheader(f"✅ '{selected_farmer}'님의 단골 ({len(loyal_fans)}명)")
+                
+                c1, c2 = st.columns([2, 1])
+                with c1:
+                    display_cols = [buyer_col, '구매횟수']
+                    if final_phone_col in loyal_fans.columns:
+                        display_cols.insert(1, final_phone_col)
+                    st.dataframe(loyal_fans[display_cols], use_container_width=True, hide_index=True)
+                with c2:
+                    st.success("📂 **카톡 발송용 파일**")
+                    buffer = io.BytesIO()
+                    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                        loyal_fans.to_excel(writer, index=False)
+                    st.download_button("📥 엑셀 다운로드", data=buffer, file_name=f"{selected_farmer}_단골.xlsx")
+        else:
+            st.warning("검색 결과가 없습니다.")
