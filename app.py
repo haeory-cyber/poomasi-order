@@ -14,7 +14,6 @@ import numpy as np
 # ==========================================
 # [중요] 발주 대상 업체 리스트 (화이트리스트)
 # ==========================================
-# 후니님이 주신 "매입처 체크리스트"를 여기에 심었습니다.
 VALID_SUPPLIERS = [
     "(영)옥천친환경농업인연합사업단", "(주)가보트레이딩", "(주)건강생활연구소", "(주)기운찬", "(주)열두달",
     "(주)우리밀", "(주)윈윈농수산", "(주)유기샘", "(주)참옻들", "(주)케이푸드", "(주)한누리",
@@ -99,8 +98,6 @@ def load_data_smart(file_obj, type='sales'):
         keywords = ['농가', '공급자', '생산자', '상품', '품목']
     elif type == 'member':
         keywords = ['회원번호', '이름', '휴대전화', '전화번호', '주소']
-    elif type == 'master': 
-        keywords = ['상품명', '단가', '적정재고', '가격']
     else:
         keywords = []
 
@@ -172,6 +169,7 @@ if menu == "📢 마케팅 & 문자발송":
     final_df = pd.DataFrame()
     sender_name_default = ""
 
+    # [모드 A] 판매 데이터 타겟팅
     if "판매 데이터" in tab_mode:
         if df_sales is None: st.info("👈 왼쪽에서 [판매내역] 파일을 올려주세요.")
         else:
@@ -194,14 +192,17 @@ if menu == "📢 마케팅 & 문자발송":
                         sel_item = st.selectbox("상품 선택", items)
                         if sel_item != "전체 상품": target_df = target_df[target_df[item_col] == sel_item]
 
+                # 집계
                 loyal = target_df.groupby(buyer_col).size().reset_index(name='구매횟수').sort_values('구매횟수', ascending=False)
                 
+                # 전화번호 매칭
                 if df_member is not None:
                     m_cols = df_member.columns
                     m_name = next((c for c in m_cols if any(x in c for x in ['이름', '회원명', '성명'])), None)
                     m_phone = next((c for c in m_cols if any(x in c for x in ['휴대전화', '전화', '연락처'])), None)
                     
                     if m_name and m_phone:
+                        # 키 통일 (공백제거)
                         loyal['key'] = loyal[buyer_col].astype(str).str.replace(' ', '')
                         df_member['key'] = df_member[m_name].astype(str).str.replace(' ', '')
                         mem_clean = df_member.drop_duplicates(subset=['key'])
@@ -217,6 +218,7 @@ if menu == "📢 마케팅 & 문자발송":
                     final_df['전화번호'] = '-'
                     final_df.columns = ['이름', '비고', '전화번호']
 
+    # [모드 B] 전체 명부 검색
     else:
         if df_member is None: st.info("👈 왼쪽에서 [회원명부] 파일을 올려주세요.")
         else:
@@ -224,6 +226,7 @@ if menu == "📢 마케팅 & 문자발송":
             m_name = next((c for c in m_cols if any(x in c for x in ['이름', '회원명', '성명'])), None)
             m_phone = next((c for c in m_cols if any(x in c for x in ['휴대전화', '전화', '연락처'])), None)
             
+            # 수동 컬럼 선택
             with st.expander("🛠️ 컬럼 설정 (검색 안 되면 클릭)", expanded=(not m_name)):
                 c_s1, c_s2 = st.columns(2)
                 m_name = c_s1.selectbox("이름 열", m_cols, index=m_cols.index(m_name) if m_name in m_cols else 0)
@@ -247,6 +250,7 @@ if menu == "📢 마케팅 & 문자발송":
                     st.success(f"🔎 {len(final_df)}명 찾음")
                 else: st.warning("검색 결과가 없습니다.")
 
+    # [공통] 결과 처리 및 발송
     if not final_df.empty:
         if '전화번호' in final_df.columns:
             final_df['전화번호'] = final_df['전화번호'].apply(clean_phone_number)
@@ -299,116 +303,111 @@ if menu == "📢 마케팅 & 문자발송":
 # 3. [기능 2] 자동 발주 시스템
 # ==========================================
 elif menu == "📦 자동 채움 발주":
-    st.title("📦 시다비서: 자동 채움 발주")
-    st.markdown("##### **'채움(Fill)'**: 데이터로 빈 공간을 정확히 채웁니다.")
+    st.title("📦 시다비서: 자동 채움 발주 (No Master)")
+    st.markdown("##### **'채움(Fill)'**: 단가표 없이 판매 데이터만으로 발주합니다.")
     
     with st.sidebar:
         st.subheader("⚙️ 발주 설정")
         budget = st.number_input("💰 오늘 예산", value=500000, step=10000)
         safety = st.slider("안전 계수 (배수)", 1.0, 1.5, 1.1, step=0.1)
-        st.caption(f"판매량의 **{safety}배**를 발주합니다.")
+        
+        st.markdown("---")
+        # [중요] 매입 원가율 설정 (기본 70%)
+        purchase_rate_pct = st.slider("📊 매입 원가율 (%)", 10, 100, 70, step=5, help="판매가 대비 매입가 비율 (마진 30%면 70% 설정)")
+        purchase_rate = purchase_rate_pct / 100.0
+        st.caption(f"판매가의 **{purchase_rate_pct}%**를 매입비용으로 추산합니다.")
         
         st.subheader("📂 파일 업로드")
         up_sales = st.file_uploader("1. 어제 판매내역 (포스)", type=['xlsx', 'csv'], key='ord_sales')
-        up_master = st.file_uploader("2. 발주 마스터 (단가표)", type=['xlsx', 'csv'], key='ord_master')
-        
-        df_tpl = pd.DataFrame({'상품명': ['두부', '콩나물'], '단가': [2000, 1500]})
-        buf_t = io.BytesIO()
-        df_tpl.to_excel(buf_t, index=False)
-        st.download_button("📥 단가표 양식 받기", buf_t, "단가표_양식.xlsx")
 
-    if up_sales and up_master:
+    if up_sales:
         df_s, _ = load_data_smart(up_sales, 'sales')
-        df_m, _ = load_data_smart(up_master, 'master')
         
-        if df_s is not None and df_m is not None:
+        if df_s is not None:
+            # 컬럼 감지
             s_item = next((c for c in df_s.columns if any(x in c for x in ['상품', '품목'])), None)
             s_qty = next((c for c in df_s.columns if any(x in c for x in ['수량', '개수'])), None)
+            s_amt = next((c for c in df_s.columns if any(x in c for x in ['금액', '매출', '판매액'])), None)
             s_farmer = next((c for c in df_s.columns if any(x in c for x in ['공급자', '농가', '생산자', '거래처'])), None)
             
-            m_item = next((c for c in df_m.columns if any(x in c for x in ['상품', '품목'])), None)
-            m_price = next((c for c in df_m.columns if any(x in c for x in ['단가', '가격'])), None)
-            
-            if s_item and m_item and m_price:
-                # [중요] 화이트리스트 필터링 (발주 대상 업체만 남기기)
+            if s_item and s_qty and s_amt:
+                # 1. 화이트리스트 필터링
                 if s_farmer:
-                    # 공백 제거 후 비교를 위해 set 준비
                     valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
-                    
-                    # 데이터프레임의 농가명도 공백 제거
                     df_s['clean_farmer'] = df_s[s_farmer].astype(str).str.replace(' ', '')
                     
-                    # 필터링 전 개수
                     before_cnt = len(df_s)
+                    df_target = df_s[df_s['clean_farmer'].isin(valid_set)].copy()
+                    after_cnt = len(df_target)
                     
-                    # 필터링 수행
-                    df_s_filtered = df_s[df_s['clean_farmer'].isin(valid_set)].copy()
-                    
-                    after_cnt = len(df_s_filtered)
-                    
-                    st.info(f"🔎 전체 {before_cnt}건 중 발주 대상 업체({len(valid_set)}곳) 물품 **{after_cnt}건**만 추려냈습니다.")
-                    
-                    # 집계 대상 교체
-                    df_target = df_s_filtered
+                    st.info(f"🔎 전체 {before_cnt}건 중 발주 대상 업체 품목 **{after_cnt}건**만 추려냈습니다.")
                 else:
-                    st.warning("⚠️ 판매 데이터에 '농가/공급자' 컬럼이 없어서 필터링을 못했습니다. 전체 품목으로 계산합니다.")
-                    df_target = df_s
+                    st.warning("⚠️ '농가/공급자' 컬럼이 없어 전체 품목을 대상으로 합니다.")
+                    df_target = df_s.copy()
 
-                # 판매량 집계
-                if s_qty:
-                    agg = df_target.groupby(s_item)[s_qty].sum().reset_index()
-                    agg.columns = ['상품명', '판매량']
-                else:
-                    agg = df_target[s_item].value_counts().reset_index()
-                    agg.columns = ['상품명', '판매량']
+                # 2. 집계 (상품별 판매량, 총매출)
+                # 같은 상품이라도 단가가 다를 수 있으므로(할인 등), 총매출/총수량으로 평균단가 계산
+                df_target[s_qty] = pd.to_numeric(df_target[s_qty], errors='coerce').fillna(0)
+                df_target[s_amt] = pd.to_numeric(df_target[s_amt], errors='coerce').fillna(0)
+                
+                agg = df_target.groupby(s_item)[[s_qty, s_amt]].sum().reset_index()
+                agg.columns = ['상품명', '판매량', '총판매액']
+                
+                # 판매량 0인 경우 제외
+                agg = agg[agg['판매량'] > 0]
 
-                agg['key'] = agg['상품명'].astype(str).str.replace(' ', '')
-                df_m['key'] = df_m[m_item].astype(str).str.replace(' ', '')
+                # 3. 평균 판매단가 및 매입가 추산
+                agg['평균판매가'] = agg['총판매액'] / agg['판매량']
+                agg['추정매입가'] = agg['평균판매가'] * purchase_rate  # 예: 1000원 * 0.7 = 700원
                 
-                merged = pd.merge(agg, df_m[['key', m_price]], on='key', how='left')
-                merged.rename(columns={m_price: '단가'}, inplace=True)
-                merged['단가'] = merged['단가'].fillna(0)
-                
-                merged['발주량'] = np.ceil(merged['판매량'] * safety)
-                merged['금액'] = merged['발주량'] * merged['단가']
+                # 4. 발주량 계산
+                agg['발주량'] = np.ceil(agg['판매량'] * safety)
+                agg['예상매입액'] = agg['발주량'] * agg['추정매입가']
                 
                 st.subheader("🚀 발주 제안서")
-                st.caption(f"안전계수 {safety}배 적용 완료")
+                st.caption(f"안전계수 {safety}배 / 매입원가율 {purchase_rate_pct}% 적용")
                 
+                # 에디터 표시
                 edited = st.data_editor(
-                    merged[['상품명', '판매량', '발주량', '금액', '단가']],
+                    agg[['상품명', '판매량', '발주량', '예상매입액', '추정매입가']],
                     column_config={
-                        "발주량": st.column_config.NumberColumn(min_value=0, step=1),
-                        "금액": st.column_config.NumberColumn(format="%d원", disabled=True),
-                        "단가": st.column_config.NumberColumn(format="%d원", disabled=True)
+                        "상품명": st.column_config.TextColumn("상품명", disabled=True),
+                        "판매량": st.column_config.NumberColumn("어제 판매", disabled=True),
+                        "발주량": st.column_config.NumberColumn("📦 발주량 (수정가능)", min_value=0, step=1),
+                        "예상매입액": st.column_config.NumberColumn(format="%d원", disabled=True),
+                        "추정매입가": st.column_config.NumberColumn(format="%d원", disabled=True, help="판매가의 70%"),
                     },
                     use_container_width=True,
                     hide_index=True
                 )
                 
-                edited['최종금액'] = edited['발주량'] * edited['단가']
+                # 최종 합계
+                edited['최종금액'] = edited['발주량'] * edited['추정매입가']
                 total = edited['최종금액'].sum()
                 
                 st.markdown("---")
                 c_m1, c_m2 = st.columns(2)
-                c_m1.metric("총 발주금액", f"{total:,.0f}원")
+                c_m1.metric("총 발주 예상금액", f"{total:,.0f}원")
+                
                 if total > budget:
                     c_m2.metric("예산 초과", f"{total - budget:,.0f}원", delta_color="inverse")
-                    st.error("🚨 예산 초과!")
+                    st.error(f"🚨 예산 {budget:,.0f}원 초과! 발주량을 조절하세요.")
                 else:
-                    c_m2.metric("잔액", f"{budget - total:,.0f}원")
+                    c_m2.metric("예산 잔액", f"{budget - total:,.0f}원")
                     st.success("✅ 예산 통과")
                 
+                # 다운로드
                 final_order = edited[edited['발주량'] > 0].copy()
                 buf_f = io.BytesIO()
                 final_order.to_excel(buf_f, index=False)
-                st.download_button("📥 최종 발주서 엑셀 다운로드", buf_f, "자동발주서.xlsx", type="primary")
+                st.download_button("📥 발주서 엑셀 다운로드", buf_f, "자동발주서.xlsx", type="primary")
 
-                txt = f"[발주] 총 {len(final_order)}건 / {total:,.0f}원\n"
+                # 카톡 텍스트
+                txt = f"[발주] 총 {len(final_order)}건 / 약 {total:,.0f}원\n"
                 for _, r in final_order.iterrows():
                     txt += f"- {r['상품명']}: {int(r['발주량'])}개\n"
                 st.text_area("카톡 전송용", txt)
 
-            else: st.error("파일에 [상품명, 단가, 수량] 컬럼이 꼭 있어야 합니다.")
+            else: st.error("파일에 [상품명, 수량, 금액] 컬럼이 꼭 있어야 합니다.")
     else:
-        st.info("👈 왼쪽에서 파일들을 업로드해주세요.")
+        st.info("👈 왼쪽에서 '어제 판매내역' 파일만 올리세요.")
