@@ -28,18 +28,16 @@ with st.sidebar:
 # 2. [데이터 로드] 스마트 로더
 # ==========================================
 @st.cache_data
-def load_smart_data_v10(keyword, type='sales'):
+def load_smart_data_final(keyword, type='sales'):
     files = os.listdir('.')
-    # 키워드 포함된 파일 찾기
     candidates = [f for f in files if keyword in f]
     if not candidates: return None, "파일 없음"
     
-    # 크기순 정렬 (큰 게 진짜일 확률 높음)
     candidates.sort(key=lambda x: os.path.getsize(x), reverse=True)
     
     for real_filename in candidates:
         try:
-            # 1. 헤더 없이 일단 읽기
+            # 헤더 없이 읽기 시도
             df_raw = None
             try:
                 df_raw = pd.read_excel(real_filename, header=None, engine='openpyxl')
@@ -52,7 +50,7 @@ def load_smart_data_v10(keyword, type='sales'):
             
             if df_raw is None or df_raw.empty: continue
 
-            # 2. 헤더 찾기 (핵심 단어 포함 여부)
+            # 헤더 찾기 (키워드 확장)
             if type == 'sales':
                 targets = ['농가', '생산자', '공급자']
                 must_have = ['상품', '품목', '품명', '회원', '구매자'] 
@@ -67,21 +65,19 @@ def load_smart_data_v10(keyword, type='sales'):
                     target_idx = idx
                     break
             
-            # 3. 데이터 정리
+            # 데이터 정리
             if target_idx != -1:
                 df_final = df_raw.iloc[target_idx+1:].copy()
                 df_final.columns = df_raw.iloc[target_idx]
-                # 컬럼 공백 제거
                 df_final.columns = df_final.columns.astype(str).str.replace(' ', '').str.replace('\n', '')
-                # Unnamed 삭제
                 df_final = df_final.loc[:, ~df_final.columns.str.contains('^Unnamed')]
                 return df_final, None
         except: continue
     return None, "읽기 실패"
 
-# 데이터 로드 실행
-df_sales, err_sales = load_smart_data_v10('sales_raw', type='sales')
-df_member, err_member = load_smart_data_v10('member', type='member')
+# 데이터 로드
+df_sales, err_sales = load_smart_data_final('sales_raw', type='sales')
+df_member, err_member = load_smart_data_final('member', type='member')
 
 # ==========================================
 # 3. [메인 화면]
@@ -92,10 +88,14 @@ if df_sales is None:
     st.error(f"🚨 판매 데이터 로드 실패: {err_sales}")
 else:
     cols = df_sales.columns.tolist()
-    farmer_col = next((c for c in cols if any(x in c for x in ['농가', '공급자', '생산자'])), None)
-    buyer_col = next((c for c in cols if any(x in c for x in ['회원', '구매자', '성명', '이름'])), None)
     
-    if not farmer_col or not buyer_col:
+    # 컬럼 자동 감지 (회원번호 추가!)
+    farmer_col = next((c for c in cols if any(x in c for x in ['농가', '공급자', '생산자'])), None)
+    buyer_name_col = next((c for c in cols if any(x in c for x in ['회원', '구매자', '성명', '이름'])), None)
+    # [핵심] 판매 데이터의 회원번호 컬럼 찾기
+    buyer_id_col = next((c for c in cols if any(x in c for x in ['회원번호', '조합원번호', '번호'])), None)
+    
+    if not farmer_col or not buyer_name_col:
         st.error("🚨 판매 데이터 필수 컬럼 누락")
     else:
         # 농가 선택
@@ -114,68 +114,97 @@ else:
             
             # 1. 단골 데이터 추출
             farmer_df = df_sales[df_sales[farmer_col] == selected_farmer].copy()
-            loyal_fans = farmer_df.groupby(buyer_col).size().reset_index(name='구매횟수')
+            
+            # 그룹핑 기준: 회원번호가 있으면 회원번호로, 없으면 이름으로
+            group_key = buyer_id_col if buyer_id_col else buyer_name_col
+            
+            # 구매횟수 집계
+            # 이름도 같이 보고 싶으니 agg를 사용
+            if buyer_id_col:
+                loyal_fans = farmer_df.groupby(group_key).agg({buyer_name_col: 'first', group_key: 'count'}).rename(columns={group_key: '구매횟수'}).reset_index()
+                # 컬럼명 정리: 회원번호, 이름, 구매횟수
+            else:
+                loyal_fans = farmer_df.groupby(buyer_name_col).size().reset_index(name='구매횟수')
+            
             loyal_fans = loyal_fans.sort_values(by='구매횟수', ascending=False)
             
-            # [강제 생성] 연락처 컬럼 초기화 (무조건 보이게 함)
+            # 연락처 컬럼 초기화
             final_phone_col = '연락처'
             loyal_fans[final_phone_col] = "-"
             
-            # 2. 명부 매칭 로직
+            # 2. 명부 매칭 로직 (동명이인 해결)
             if df_member is not None and not df_member.empty:
                 mem_cols = df_member.columns.tolist()
                 
-                auto_name = next((c for c in mem_cols if any(x in c for x in ['회원', '성명', '이름'])), None)
-                auto_phone = next((c for c in mem_cols if any(x in c for x in ['휴대전화', '전화', '연락처', 'HP'])), None)
+                # 명부 컬럼 자동 감지
+                mem_id_auto = next((c for c in mem_cols if any(x in c for x in ['회원번호', '조합원번호', '번호'])), None)
+                mem_name_auto = next((c for c in mem_cols if any(x in c for x in ['회원명', '성명', '이름'])), None)
+                mem_phone_auto = next((c for c in mem_cols if any(x in c for x in ['휴대전화', '전화', '연락처', 'HP'])), None)
                 
-                with st.expander("🛠️ 명부 매칭 설정 (클릭)", expanded=True):
+                with st.expander("🛠️ 명부 매칭 설정 (동명이인 해결)", expanded=True):
                     c1, c2, c3 = st.columns(3)
                     with c1:
-                        sel_name_col = st.selectbox("이름 컬럼 (명부)", mem_cols, index=mem_cols.index(auto_name) if auto_name in mem_cols else 0)
+                        # 매칭 기준 선택 (회원번호 권장)
+                        match_mode = st.radio("매칭 기준", ["회원번호(정확함)", "이름(동명이인 위험)"], index=0 if buyer_id_col and mem_id_auto else 1)
+                    
                     with c2:
-                        sel_phone_col = st.selectbox("전화번호 컬럼 (명부)", mem_cols, index=mem_cols.index(auto_phone) if auto_phone in mem_cols else 0)
+                        if "회원번호" in match_mode:
+                            sel_key_col_mem = st.selectbox("명부의 회원번호 컬럼", mem_cols, index=mem_cols.index(mem_id_auto) if mem_id_auto in mem_cols else 0)
+                            key_col_sales = buyer_id_col
+                        else:
+                            sel_key_col_mem = st.selectbox("명부의 이름 컬럼", mem_cols, index=mem_cols.index(mem_name_auto) if mem_name_auto in mem_cols else 0)
+                            key_col_sales = buyer_name_col
+                            
                     with c3:
-                        if sel_name_col:
-                            st.caption(f"명부 예시: {df_member[sel_name_col].iloc[0]}")
-                            st.caption(f"판매 예시: {loyal_fans[buyer_col].iloc[0]}")
+                        sel_phone_col = st.selectbox("명부의 전화번호 컬럼", mem_cols, index=mem_cols.index(mem_phone_auto) if mem_phone_auto in mem_cols else 0)
 
-                if sel_name_col and sel_phone_col:
+                    if key_col_sales and sel_key_col_mem:
+                        st.caption(f"ℹ️ 판매데이터 '{key_col_sales}' ↔ 명부 '{sel_key_col_mem}' 연결 중...")
+
+                # 매칭 실행
+                if sel_key_col_mem and sel_phone_col and key_col_sales:
                     try:
-                        # 데이터 준비
-                        phone_book = df_member[[sel_name_col, sel_phone_col]].copy()
-                        phone_book = phone_book.dropna(subset=[sel_name_col]).drop_duplicates(subset=[sel_name_col])
+                        # 명부 준비
+                        phone_book = df_member[[sel_key_col_mem, sel_phone_col]].copy()
+                        # 키값이 없는 경우 제거
+                        phone_book = phone_book.dropna(subset=[sel_key_col_mem]).drop_duplicates(subset=[sel_key_col_mem])
                         
-                        # [핵심] 공백 제거 후 문자열로 변환하여 병합
-                        phone_book['key'] = phone_book[sel_name_col].astype(str).str.strip()
-                        loyal_fans['key'] = loyal_fans[buyer_col].astype(str).str.strip()
+                        # 키 통일 (문자열로 변환하여 공백 제거)
+                        # 회원번호가 숫자로 되어있을 수 있으니 .0 제거 처리
                         
-                        # 병합 실행
-                        merged = pd.merge(loyal_fans, phone_book, on='key', how='left')
+                        def clean_key(x):
+                            return str(x).replace('.0', '').strip()
+
+                        phone_book['join_key'] = phone_book[sel_key_col_mem].apply(clean_key)
+                        loyal_fans['join_key'] = loyal_fans[key_col_sales].apply(clean_key)
                         
-                        # 연락처 업데이트 (매칭된 것만 덮어쓰기)
+                        # 병합
+                        merged = pd.merge(loyal_fans, phone_book, on='join_key', how='left')
+                        
+                        # 결과 반영
                         loyal_fans[final_phone_col] = merged[sel_phone_col].fillna("-")
                         
                     except Exception as e:
-                        st.error(f"매칭 중 오류: {e}")
+                        st.error(f"매칭 오류: {e}")
 
             # ------------------------------------------------
             # 결과 출력
             # ------------------------------------------------
             st.markdown("---")
-            # [오류 수정 부분] f-string을 한 줄로 깔끔하게 작성했습니다.
             st.subheader(f"✅ '{selected_farmer}'님의 단골 ({len(loyal_fans)}명)")
             
-            # 매칭 현황 진단
             matched_count = (loyal_fans[final_phone_col] != "-").sum()
-            if matched_count == 0:
-                st.warning("⚠️ 연락처 매칭 실패 (이름 표기가 서로 다른 것 같습니다)")
+            if matched_count > 0:
+                st.success(f"📞 **{matched_count}명**의 연락처를 찾았습니다! (매칭 기준: {key_col_sales})")
             else:
-                st.success(f"📞 {matched_count}명의 연락처를 찾았습니다!")
+                st.warning("⚠️ 매칭된 연락처가 없습니다. 매칭 기준을 확인해주세요.")
             
             col1, col2 = st.columns([2, 1])
             with col1:
-                # 화면 표시용 컬럼 정리
-                display_cols = [buyer_col, final_phone_col, '구매횟수']
+                # 보여줄 컬럼
+                display_cols = [buyer_name_col, final_phone_col, '구매횟수']
+                if buyer_id_col: display_cols.insert(1, buyer_id_col) # 회원번호도 같이 보여줌
+                
                 st.dataframe(loyal_fans[display_cols], use_container_width=True, hide_index=True)
                 
             with col2:
