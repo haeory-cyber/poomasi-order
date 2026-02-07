@@ -24,7 +24,7 @@ with st.sidebar:
 @st.cache_data
 def load_data():
     try:
-        # sales_raw.xlsx : 누가 무엇을 샀는지 들어있는 '상세' 파일
+        # sales_raw.xlsx : 이미 올려주신 그 파일을 읽습니다!
         # header=0 : 첫 번째 줄을 제목으로 씀
         df = pd.read_excel('sales_raw.xlsx', engine='openpyxl')
         
@@ -45,7 +45,11 @@ st.markdown("---")
 
 if df is None:
     st.error("🚨 `sales_raw.xlsx` 파일을 찾을 수 없습니다!")
-    st.warning("깃허브(GitHub)에 `sales_raw.xlsx` 파일을 업로드해주세요. (기존 `sales.xlsx` 아님)")
+    # 파일이 있는데도 못 찾는 경우를 대비해 상세 에러 메시지 출력
+    try:
+        df_check = pd.read_excel('sales_raw.xlsx', engine='openpyxl')
+    except Exception as e:
+        st.write("에러 상세 내용:", e)
 else:
     # ---------------------------------------------------------
     # 1. 생산자 선택하기
@@ -73,6 +77,7 @@ else:
         # 회원별로 구매 횟수와 총액 집계
         # (회원번호가 있으면 더 정확하겠지만, 일단 이름으로 집계)
         group_cols = [member_col]
+        # 전화번호 컬럼이 있다면 같이 묶어서 보여줌
         if phone_col: group_cols.append(phone_col)
         
         # 집계 시작
