@@ -15,6 +15,12 @@ import requests
 # ==========================================
 def send_coolsms_direct(api_key, api_secret, sender, receiver, text):
     try:
+        # [중요] 전화번호에서 숫자만 남기기 (강제 정제)
+        clean_receiver = re.sub(r'[^0-9]', '', str(receiver))
+        clean_sender = re.sub(r'[^0-9]', '', str(sender))
+
+        if not clean_receiver: return False, "전화번호 없음"
+
         date = datetime.datetime.now(datetime.timezone.utc).isoformat()
         salt = str(uuid.uuid4())
         data = date + salt
@@ -24,7 +30,13 @@ def send_coolsms_direct(api_key, api_secret, sender, receiver, text):
             "Content-Type": "application/json"
         }
         url = "https://api.coolsms.co.kr/messages/v4/send"
-        payload = {"message": {"to": receiver, "from": sender, "text": text}}
+        payload = {
+            "message": {
+                "to": clean_receiver,  # 정제된 번호 사용
+                "from": clean_sender,  # 정제된 번호 사용
+                "text": text
+            }
+        }
         res = requests.post(url, json=payload, headers=headers)
         if res.status_code == 200: return True, res.json()
         else: return False, res.json()
@@ -65,14 +77,13 @@ with st.sidebar:
     uploaded_member = st.file_uploader("👉 '회원관리(최신전체).xlsx' 업로드", type=['xlsx', 'csv'], key='member')
 
 # ==========================================
-# 2. [데이터 로드] - 스마트 헤더 감지 기능 탑재
+# 2. [데이터 로드] - 스마트 헤더 감지
 # ==========================================
 @st.cache_data
 def load_data_from_upload(file_obj, type='sales'):
     if file_obj is None: return None, "파일 없음"
     df_raw = None
     
-    # 1. 일단 파일 읽기 (헤더 없이 전체)
     try: df_raw = pd.read_excel(file_obj, header=None, engine='openpyxl')
     except:
         try:
@@ -80,38 +91,26 @@ def load_data_from_upload(file_obj, type='sales'):
             df_raw = pd.read_csv(file_obj, header=None, encoding='utf-8')
         except: return None, "읽기 실패"
 
-    # 2. '진짜 헤더' 행 찾기 (Unnamed 제거 작전)
-    # 후니님이 알려주신 핵심 키워드들이 포함된 행을 찾습니다.
     if type == 'sales':
         keywords = ['농가', '공급자', '생산자', '상품', '품목']
     else:
-        # 명부 파일 핵심 키워드: 이름, 휴대전화, 회원번호
         keywords = ['회원번호', '이름', '휴대전화', '전화번호', '주소']
 
     target_row_idx = -1
-    
-    # 위에서부터 20줄만 검사해서 '키워드'가 있는 줄을 찾아냅니다.
     for idx, row in df_raw.head(20).iterrows():
         row_str = row.astype(str).str.cat(sep=' ')
-        # 키워드 중 2개 이상이 포함된 줄을 진짜 헤더로 간주
         match_cnt = sum(1 for k in keywords if k in row_str)
         if match_cnt >= 2:
             target_row_idx = idx
             break
             
     if target_row_idx != -1:
-        # 헤더를 찾았으면 그 줄부터 다시 정제해서 가져옴
         df_final = df_raw.iloc[target_row_idx+1:].copy()
-        df_final.columns = df_raw.iloc[target_row_idx] # 그 줄을 컬럼명으로!
-        
-        # 컬럼명 공백/줄바꿈 제거 (깔끔하게)
+        df_final.columns = df_raw.iloc[target_row_idx]
         df_final.columns = df_final.columns.astype(str).str.replace(' ', '').str.replace('\n', '')
-        
-        # 'Unnamed' 로 시작하는 이상한 컬럼은 삭제
         df_final = df_final.loc[:, ~df_final.columns.str.contains('^Unnamed')]
         return df_final, None
     else:
-        # 헤더를 못 찾았으면 (혹시 모르니) 그냥 원본 반환
         return df_raw, "헤더 못 찾음"
 
 # ==========================================
@@ -119,11 +118,9 @@ def load_data_from_upload(file_obj, type='sales'):
 # ==========================================
 st.title("🤝 생산자와 품앗이님을 잇는 '연결 고리'")
 
-# 데이터 로딩
 df_sales, msg_sales = load_data_from_upload(uploaded_sales, 'sales')
 df_member, msg_member = load_data_from_upload(uploaded_member, 'member')
 
-# === [모드 선택] ===
 mode = st.radio("👉 작업 모드를 선택하세요:", ["🛒 판매 데이터로 마케팅 (단골 찾기)", "🔍 전체 명부 검색 (개별 발송)"], horizontal=True)
 
 final_df = pd.DataFrame() 
@@ -137,13 +134,12 @@ if "판매 데이터" in mode:
         st.info("👈 **왼쪽 사이드바** 1번에 [판매 내역] 파일을 업로드해주세요.")
     else:
         cols = df_sales.columns.tolist()
-        # 판매내역 컬럼 자동 감지
         farmer_col = next((c for c in cols if any(x in c for x in ['농가', '공급자', '생산자'])), None)
         buyer_name_col = next((c for c in cols if any(x in c for x in ['회원', '구매자', '성명', '이름'])), None)
         item_col = next((c for c in cols if any(x in c for x in ['상품', '품목', '품명'])), None)
 
         if not farmer_col or not buyer_name_col:
-            st.error("🚨 판매 내역 형식을 인식할 수 없습니다. (헤더가 1행에 있나요?)")
+            st.error("🚨 판매 내역 형식을 인식할 수 없습니다.")
         else:
             all_farmers = df_sales[farmer_col].value_counts().index.tolist()
             c1, c2 = st.columns([1, 1])
@@ -170,13 +166,11 @@ if "판매 데이터" in mode:
             loyal_fans['join_key'] = loyal_fans[buyer_name_col].astype(str).str.strip()
             loyal_fans = loyal_fans.sort_values(by='구매횟수', ascending=False)
             
-            # 매칭 로직 (판매데이터 모드)
             final_phone_col = '연락처'
             if df_member is not None:
                 m_cols = df_member.columns.tolist()
-                # 명부에서 이름/전화번호 자동 찾기
                 auto_name = next((c for c in m_cols if any(x in c for x in ['이름', '회원명', '성명'])), None)
-                auto_phone = next((c for c in m_cols if any(x in c for x in ['휴대전화', '전화', '연락처', '이동전화'])), None)
+                auto_phone = next((c for c in m_cols if any(x in c for x in ['휴대전화', '전화', '연락처'])), None)
                 
                 if auto_name and auto_phone:
                     phone_book = df_member[[auto_name, auto_phone]].copy()
@@ -198,44 +192,36 @@ if "판매 데이터" in mode:
                 final_df.columns = ['이름', '전화번호', '비고']
 
 # ------------------------------------------------
-# [모드 2] 전체 명부 검색 (완전 개선)
+# [모드 2] 전체 명부 검색
 # ------------------------------------------------
 else:
     if df_member is None:
         st.info("👈 **왼쪽 사이드바** 2번에 [회원관리(최신전체).xlsx] 파일을 올려주세요.")
     else:
         st.success(f"📂 명부 인식 완료! (총 {len(df_member):,}명)")
-        
-        # [자동 감지] 후니님이 알려준 순서대로 컬럼이 있을 확률이 높음
-        # 회원번호/이름/휴대전화번소...
         all_cols = df_member.columns.tolist()
         
-        # 이름, 전화번호 컬럼 자동 찾기
         target_name_col = next((c for c in all_cols if any(x in c for x in ['이름', '회원명', '성명'])), None)
-        target_phone_col = next((c for c in all_cols if any(x in c for x in ['휴대전화', '전화', '연락처', '이동전화'])), None)
+        target_phone_col = next((c for c in all_cols if any(x in c for x in ['휴대전화', '전화', '연락처'])), None)
 
-        # 혹시 못 찾았을 경우를 대비한 수동 선택창
         with st.expander("🛠️ 컬럼 확인/변경 (이름과 전화번호 열이 맞나요?)", expanded=(target_name_col is None)):
-            st.dataframe(df_member.head(3)) # 상위 3줄 보여줌
+            st.dataframe(df_member.head(3))
             c_sel1, c_sel2 = st.columns(2)
             with c_sel1:
                 target_name_col = st.selectbox("👉 '이름' 열", all_cols, index=all_cols.index(target_name_col) if target_name_col else 0)
             with c_sel2:
                 target_phone_col = st.selectbox("👉 '전화번호' 열", all_cols, index=all_cols.index(target_phone_col) if target_phone_col else 0)
 
-        # 검색 로직
         c_s1, c_s2 = st.columns([3, 1])
         with c_s1:
             search_keyword = st.text_input("🔍 이름 또는 전화번호 뒷자리 검색", placeholder="예: 김성훈 (빈칸이면 전체 보기)")
         
         if target_name_col and target_phone_col:
-            # 데이터 준비
             df_search = df_member[[target_name_col, target_phone_col]].copy()
             df_search.columns = ['이름', '전화번호']
-            df_search['이름'] = df_search['이름'].astype(str).str.replace(' ', '') # 이름 공백 제거
+            df_search['이름'] = df_search['이름'].astype(str).str.replace(' ', '')
             df_search['전화번호'] = df_search['전화번호'].apply(clean_phone_number)
             
-            # 필터링
             if search_keyword:
                 clean_keyword = search_keyword.replace(' ', '')
                 mask = df_search['이름'].str.contains(clean_keyword) | df_search['전화번호'].str.contains(clean_keyword)
@@ -315,7 +301,7 @@ if not final_df.empty:
                     if not test_phone: st.error("번호를 입력하세요.")
                     else:
                         success, res = send_coolsms_direct(api_key, api_secret, sender_number, test_phone, msg_content)
-                        if success: st.success("✅ 전송 성공!")
+                        if success: st.success(f"✅ 전송 성공! ({res.get('groupInfo', {}).get('log', 'OK')})")
                         else: st.error(f"❌ 전송 실패: {res}")
 
             with send_col2:
@@ -327,10 +313,27 @@ if not final_df.empty:
                         progress_bar = st.progress(0)
                         targets = selected_df['전화번호'].tolist()
                         success_cnt = 0
+                        
+                        # [상세 에러 확인용 컨테이너]
+                        status_text = st.empty()
+                        
                         for i, phone in enumerate(targets):
                             time.sleep(0.1)
-                            suc, _ = send_coolsms_direct(api_key, api_secret, sender_number, phone, msg_content)
-                            if suc: success_cnt += 1
+                            # 여기서도 한 번 더 정제
+                            clean_p = re.sub(r'[^0-9]', '', str(phone))
+                            
+                            suc, res = send_coolsms_direct(api_key, api_secret, sender_number, clean_p, msg_content)
+                            if suc: 
+                                success_cnt += 1
+                            else:
+                                # 실패 이유를 잠깐 보여줌
+                                print(f"실패({phone}): {res}") 
+                                
                             progress_bar.progress((i + 1) / len(targets))
+                            status_text.text(f"🚀 발송 중... ({i+1}/{len(targets)})")
+                        
+                        status_text.empty()
                         st.success(f"🎉 **총 {success_cnt}건 발송 성공!**")
+                        if success_cnt < len(targets):
+                            st.warning(f"⚠️ {len(targets) - success_cnt}건 실패 (전화번호 형식 등을 확인하세요)")
                         st.balloons()
