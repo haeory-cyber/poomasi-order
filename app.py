@@ -19,18 +19,16 @@ with st.sidebar:
     st.markdown("---")
     st.caption("📂 파일 점검")
     files = os.listdir('.')
-    
-    # 파일 존재 여부 표시
     if any('member' in f for f in files):
         st.success("✅ 조합원 명부 파일 있음")
     else:
         st.error("❌ 조합원 명부(member) 파일 없음")
 
 # ==========================================
-# 2. [데이터 로드] 스마트 로더
+# 2. [데이터 로드] 스마트 로더 (CSV/Excel)
 # ==========================================
 @st.cache_data
-def load_smart_data_v4(keyword, type='sales'):
+def load_smart_data_v5(keyword, type='sales'):
     files = os.listdir('.')
     candidates = [f for f in files if keyword in f]
     
@@ -39,22 +37,21 @@ def load_smart_data_v4(keyword, type='sales'):
     
     real_filename = candidates[0] 
 
-    # CSV 우선 시도 -> 엑셀 시도
-    df = None
+    # 전략: CSV 시도 -> 엑셀 시도
     encodings = ['utf-8', 'cp949', 'euc-kr']
-    
-    # 1. CSV 시도
     for enc in encodings:
         try:
+            # 일단 텍스트로 읽어서 헤더 위치 찾기
             temp_df = pd.read_csv(real_filename, encoding=enc, on_bad_lines='skip', engine='python')
             
-            # 헤더 키워드 (전화번호 관련 단어 대폭 추가)
+            # 헤더 키워드 정의
             if type == 'sales':
                 keywords = ['농가', '생산자', '상품', '품목']
             else:
-                keywords = ['회원', '성명', '전화', '휴대폰', '연락처', 'HP', '이동전화', '모바일']
+                keywords = ['회원', '성명', '전화', '휴대폰', '연락처', 'HP', '이동전화', '모바일', '휴대전화']
             
             target_row = -1
+            # 앞부분 50줄을 뒤져서 키워드가 2개 이상 있는 줄을 헤더로 간주
             for idx in range(min(50, len(temp_df))):
                 row_str = temp_df.iloc[idx].astype(str).str.cat(sep=' ')
                 if sum(k in row_str for k in keywords) >= 2:
@@ -65,11 +62,12 @@ def load_smart_data_v4(keyword, type='sales'):
                 df = pd.read_csv(real_filename, encoding=enc, header=target_row+1, on_bad_lines='skip', engine='python')
                 return clean_columns(df), None
             else:
+                # 헤더 못 찾으면 그냥 첫 줄부터
                 return clean_columns(temp_df), None
         except:
             continue
 
-    # 2. 엑셀 시도
+    # 엑셀로 시도
     try:
         df = pd.read_excel(real_filename, engine='openpyxl')
         return find_header_and_clean_excel(df, type), None
@@ -77,7 +75,7 @@ def load_smart_data_v4(keyword, type='sales'):
         return None, f"읽기 실패 ({e})"
 
 def find_header_and_clean_excel(df, type):
-    keywords = ['농가', '생산자', '상품', '품목'] if type == 'sales' else ['회원', '성명', '전화', '휴대폰', '연락처']
+    keywords = ['농가', '생산자', '상품', '품목'] if type == 'sales' else ['회원', '성명', '전화', '휴대전화', '연락처']
     target_row = -1
     for idx in range(min(30, len(df))):
         row_str = df.iloc[idx].astype(str).str.cat(sep=' ')
@@ -95,8 +93,8 @@ def clean_columns(df):
     return df
 
 # 데이터 로드
-df_sales, err_sales = load_smart_data_v4('sales_raw', type='sales')
-df_member, err_member = load_smart_data_v4('member', type='member')
+df_sales, err_sales = load_smart_data_v5('sales_raw', type='sales')
+df_member, err_member = load_smart_data_v5('member', type='member')
 
 # ==========================================
 # 3. [메인 화면]
@@ -111,7 +109,7 @@ else:
     buyer_col = next((c for c in cols if any(x in c for x in ['회원', '구매자', '성명', '이름'])), None)
     
     if not farmer_col or not buyer_col:
-        st.error("🚨 판매 데이터에서 필수 컬럼을 못 찾았습니다.")
+        st.error("🚨 판매 데이터에서 필수 컬럼(농가명, 구매자명)을 찾지 못했습니다.")
     else:
         # 농가 선택
         farmer_counts = df_sales[farmer_col].value_counts()
@@ -127,37 +125,35 @@ else:
             with col_select:
                 selected_farmer = st.selectbox("목록에서 선택", filtered_farmers)
             
-            # 데이터 매칭 시작
+            # 1. 단골 데이터 추출
             farmer_df = df_sales[df_sales[farmer_col] == selected_farmer].copy()
             loyal_fans = farmer_df.groupby(buyer_col).size().reset_index(name='구매횟수')
             loyal_fans = loyal_fans.sort_values(by='구매횟수', ascending=False)
             
-            # [중요] 조합원 명부 매칭 진단
+            # 2. 조합원 명부 매칭 (수동 선택 기능 추가!)
             final_phone_col = '연락처'
-            matched_count = 0
             
             if df_member is not None and not df_member.empty:
                 mem_cols = df_member.columns.tolist()
-                # 전화번호 관련 키워드 대폭 추가
-                phone_keywords = ['전화', '휴대폰', '연락처', 'HP', '이동전화', '모바일', 'Tel']
-                name_keywords = ['회원', '성명', '이름', '조합원']
                 
-                mem_name = next((c for c in mem_cols if any(x in c for x in name_keywords)), None)
-                mem_phone = next((c for c in mem_cols if any(x in c for x in phone_keywords)), None)
+                # 자동 감지 시도 ('휴대전화' 포함)
+                auto_name = next((c for c in mem_cols if any(x in c for x in ['회원', '성명', '이름', '조합원'])), None)
+                auto_phone = next((c for c in mem_cols if any(x in c for x in ['휴대전화', '전화', '연락처', 'HP', '모바일'])), None)
                 
-                # 진단 메시지 출력 (화면에 보임)
-                if not mem_name or not mem_phone:
-                    st.warning(f"⚠️ 명부 파일은 읽었으나 컬럼을 못 찾았습니다.\n(발견된 컬럼: {mem_cols})")
-                else:
-                    st.success(f"✅ 명부 연결 성공! (이름칸: `{mem_name}`, 전화칸: `{mem_phone}`)")
-                    
-                    # 매칭 실행
-                    phone_book = df_member[[mem_name, mem_phone]].drop_duplicates(subset=[mem_name])
-                    loyal_fans = pd.merge(loyal_fans, phone_book, left_on=buyer_col, right_on=mem_name, how='left')
-                    loyal_fans.rename(columns={mem_phone: final_phone_col}, inplace=True)
-                    
-                    # 매칭된 숫자 확인
-                    matched_count = loyal_fans[final_phone_col].notnull().sum()
+                with st.expander("🛠️ 명부 매칭 설정 (전화번호가 안 보이면 클릭하세요)", expanded=False):
+                    st.info("명부 파일에서 이름과 전화번호 컬럼을 선택합니다.")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        # 사용자가 직접 컬럼을 고를 수 있게 함
+                        sel_name_col = st.selectbox("이름 컬럼 선택", mem_cols, index=mem_cols.index(auto_name) if auto_name in mem_cols else 0)
+                    with c2:
+                        sel_phone_col = st.selectbox("전화번호 컬럼 선택", mem_cols, index=mem_cols.index(auto_phone) if auto_phone in mem_cols else 0)
+                
+                # 매칭 실행
+                if sel_name_col and sel_phone_col:
+                    phone_book = df_member[[sel_name_col, sel_phone_col]].drop_duplicates(subset=[sel_name_col])
+                    loyal_fans = pd.merge(loyal_fans, phone_book, left_on=buyer_col, right_on=sel_name_col, how='left')
+                    loyal_fans.rename(columns={sel_phone_col: final_phone_col}, inplace=True)
             else:
                 st.info("ℹ️ 조합원 명부 파일이 없습니다.")
 
@@ -179,9 +175,9 @@ else:
             
             col1, col2 = st.columns([2, 1])
             with col1:
-                # 연락처 있는 사람 수 보여주기
+                # 연락처 확보율 표시
                 has_phone = loyal_fans[final_phone_col].notnull().sum() if final_phone_col in loyal_fans.columns else 0
-                st.caption(f"📞 연락처 확보: {len(loyal_fans)}명 중 **{has_phone}명**")
+                st.caption(f"📞 연락처 확보: {len(loyal_fans)}명 중 **{has_phone}명** (성공률: {int(has_phone/len(loyal_fans)*100) if len(loyal_fans)>0 else 0}%)")
                 
                 display_cols = [buyer_col, '구매횟수']
                 if final_phone_col in loyal_fans.columns:
@@ -192,15 +188,16 @@ else:
             with col2:
                 st.success("📂 **참여 유도용 파일**")
                 
-                # 엑셀 생성 (xlsxwriter가 없으면 기본값 사용하도록 안전장치)
                 buffer = io.BytesIO()
+                # xlsxwriter 설치 확인
                 try:
-                    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                        loyal_fans.to_excel(writer, index=False)
-                except:
-                    # xlsxwriter 없을 때 대비 (fallback)
-                    with pd.ExcelWriter(buffer) as writer:
-                        loyal_fans.to_excel(writer, index=False)
+                    import xlsxwriter
+                    engine_name = 'xlsxwriter'
+                except ImportError:
+                    engine_name = 'openpyxl'
+                
+                with pd.ExcelWriter(buffer, engine=engine_name) as writer:
+                    loyal_fans.to_excel(writer, index=False)
                         
                 st.download_button(
                     label="📥 엑셀 다운로드",
