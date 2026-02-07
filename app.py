@@ -11,7 +11,7 @@ st.set_page_config(page_title="품앗이마을 관계망", page_icon="🤝", lay
 with st.sidebar:
     st.header("🔒 품앗이님 확인")
     password = st.text_input("비밀번호", type="password")
-    if password != "poom0118**":
+    if password != "poomasi2026":
         st.warning("비밀번호를 입력해주세요.")
         st.stop()
     st.success("환영합니다, 후니님!")
@@ -50,6 +50,7 @@ def load_smart_data(target_name, type='sales'):
             keywords = ['회원', '성명', '전화', '휴대폰', '연락처', '조합원', '이름']
             
         target_row = -1
+        # 데이터 앞부분 30줄을 검사
         for idx in range(min(30, len(df))):
             row_str = df.iloc[idx].astype(str).str.cat(sep=' ')
             if sum(k in row_str for k in keywords) >= 2:
@@ -61,11 +62,13 @@ def load_smart_data(target_name, type='sales'):
             df = df[target_row+1:]
             df.columns = new_header
             
+        # 컬럼명 공백 제거
         df.columns = df.columns.astype(str).str.replace(' ', '').str.replace('\n', '')
         return df, None
         
     return None, "알 수 없는 오류"
 
+# 데이터 로드
 df_sales, err_sales = load_smart_data('sales_raw.xlsx', type='sales')
 df_member, err_member = load_smart_data('member.xlsx', type='member')
 
@@ -78,21 +81,21 @@ if df_sales is None:
     st.error(f"🚨 판매 데이터 로드 실패: {err_sales}")
 else:
     # -----------------------------------------------------
-    # [진단] 컬럼 매칭 상태 보여주기 (범인 잡기)
+    # [진단] 컬럼 매칭 상태 보여주기
     # -----------------------------------------------------
     cols = df_sales.columns.tolist()
     
-    # 키워드 대폭 추가 ('주문자', '소비자' 등)
+    # 컬럼 찾기 (키워드 매칭)
     farmer_col = next((c for c in cols if any(x in c for x in ['농가', '공급자', '생산자'])), None)
     buyer_col = next((c for c in cols if any(x in c for x in ['회원', '구매자', '성명', '주문자', '소비자', '이름'])), None)
     item_col = next((c for c in cols if any(x in c for x in ['상품', '품목', '품명'])), None)
     
-    st.info(f"📊 **데이터 분석 상태**\n- 찾은 농가 컬럼: `{farmer_col}`\n- 찾은 구매자 컬럼: `{buyer_col}`")
+    st.info(f"📊 **데이터 분석 상태**\n- 농가 컬럼: `{farmer_col}`\n- 구매자 컬럼: `{buyer_col}`")
 
     if not farmer_col or not buyer_col:
-        st.error("🚨 중요! 엑셀 파일에서 '농가명'이나 '구매자명'을 찾지 못했습니다.")
+        st.error("🚨 엑셀 파일에서 '농가명'이나 '구매자명'을 찾지 못했습니다.")
         st.write("현재 엑셀 파일의 컬럼들:", cols)
-        st.warning("해결법: 엑셀 파일의 첫 줄(제목)에 '농가명', '구매자명' 같은 단어가 정확히 있는지 확인해주세요.")
+        st.warning("팁: 엑셀 파일의 제목줄에 '농가명', '회원명' 같은 단어가 있는지 확인해주세요.")
     else:
         # 정상 작동
         all_farmers = sorted(df_sales[farmer_col].dropna().unique().tolist())
@@ -117,18 +120,4 @@ else:
                 loyal_fans = farmer_df.groupby(buyer_col).size().reset_index(name='구매횟수')
                 loyal_fans = loyal_fans.sort_values(by='구매횟수', ascending=False)
                 
-                # 명부 매칭
-                final_phone_col = '연락처'
-                if df_member is not None and not df_member.empty:
-                    mem_cols = df_member.columns.tolist()
-                    mem_name = next((c for c in mem_cols if any(x in c for x in ['회원', '성명', '이름'])), None)
-                    mem_phone = next((c for c in mem_cols if any(x in c for x in ['전화', '핸드폰', '연락처'])), None)
-                    
-                    if mem_name and mem_phone:
-                        phone_book = df_member[[mem_name, mem_phone]].drop_duplicates(subset=[mem_name])
-                        loyal_fans = pd.merge(loyal_fans, phone_book, left_on=buyer_col, right_on=mem_name, how='left')
-                        loyal_fans.rename(columns={mem_phone: final_phone_col}, inplace=True)
-                
-                # 연락처 없으면 판매데이터에서 찾기
-                if final_phone_col not in loyal_fans.columns:
-                    sales_phone = next((c for c in cols if any(x in c for x in ['전화', '핸드폰', '연락처'])), None
+                # 명부
