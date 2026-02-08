@@ -12,6 +12,12 @@ import requests
 import numpy as np
 
 # ==========================================
+# [설정] 서버에 저장된 연락처 파일명
+# ==========================================
+# 이 파일이 깃허브(서버) 같은 폴더에 있어야 합니다.
+SERVER_CONTACT_FILE = "농가관리 목록_20260208 (전체).xlsx"
+
+# ==========================================
 # [중요] 발주 대상 업체 리스트
 # ==========================================
 VALID_SUPPLIERS = [
@@ -76,7 +82,8 @@ def load_data_smart(file_obj, type='sales'):
     try: df_raw = pd.read_excel(file_obj, header=None, engine='openpyxl')
     except:
         try:
-            file_obj.seek(0)
+            # 파일 객체일 경우 seek
+            if hasattr(file_obj, 'seek'): file_obj.seek(0)
             df_raw = pd.read_csv(file_obj, header=None, encoding='utf-8')
         except: return None, "읽기 실패"
 
@@ -105,8 +112,8 @@ def load_data_smart(file_obj, type='sales'):
         return df_final, None
     else:
         try:
-            file_obj.seek(0)
-            return pd.read_excel(file_obj) if file_obj.name.endswith('xlsx') else pd.read_csv(file_obj), "헤더 못 찾음(기본로드)"
+            if hasattr(file_obj, 'seek'): file_obj.seek(0)
+            return pd.read_excel(file_obj) if (hasattr(file_obj, 'name') and file_obj.name.endswith('xlsx')) else pd.read_csv(file_obj), "헤더 못 찾음(기본로드)"
         except: return df_raw, "헤더 못 찾음"
 
 def to_clean_number(x):
@@ -183,7 +190,7 @@ if menu == "📢 마케팅 & 문자발송":
 # ==========================================
 elif menu == "📦 자동 채움 발주":
     st.title("📦 시다비서: 자동 채움 발주 + 안심 문자")
-    st.markdown("##### **'채움(Fill)'**: 판매 데이터 분석 $\\rightarrow$ **건별 확인 후** 문자 발주")
+    st.markdown("##### **'채움(Fill)'**: 판매 데이터 $\\rightarrow$ **업체별 자동 분류 & 문자 발송**")
     
     with st.sidebar:
         st.subheader("⚙️ 계산 설정")
@@ -193,9 +200,33 @@ elif menu == "📦 자동 채움 발주":
         purchase_rate = purchase_rate_pct / 100.0
         
         st.subheader("📂 파일 업로드")
-        # [NEW] accept_multiple_files=True 적용
-        up_sales_list = st.file_uploader("1. 판매내역 (여러 개 가능)", type=['xlsx', 'csv'], key='ord_sales', accept_multiple_files=True)
-        up_info = st.file_uploader("2. 업체 연락처 (농가관리 목록)", type=['xlsx', 'csv'], key='ord_info')
+        # 판매내역만 업로드 (연락처는 서버에서 로드)
+        up_sales_list = st.file_uploader("판매 실적 파일 (여러 개 가능)", type=['xlsx', 'csv'], key='ord_sales', accept_multiple_files=True)
+        
+        # [서버 파일 로드 상태 표시]
+        if os.path.exists(SERVER_CONTACT_FILE):
+            st.success(f"📞 서버 연락처 파일 감지됨\n({SERVER_CONTACT_FILE})")
+        else:
+            st.error(f"❌ 연락처 파일이 서버에 없습니다.\n'{SERVER_CONTACT_FILE}'을 올려주세요.")
+
+    # 연락처 로드 (서버 파일 우선)
+    df_phone_map = pd.DataFrame()
+    if os.path.exists(SERVER_CONTACT_FILE):
+        try:
+            # 서버 파일 읽기
+            with open(SERVER_CONTACT_FILE, "rb") as f:
+                df_i, _ = load_data_smart(f, 'info')
+            
+            if df_i is not None:
+                i_name = next((c for c in df_i.columns if '농가명' in c), None)
+                i_phone = next((c for c in df_i.columns if '휴대전화' in c or '전화' in c), None)
+                if i_name and i_phone:
+                    df_i['clean_name'] = df_i[i_name].astype(str).str.replace(' ', '')
+                    df_i['clean_phone'] = df_i[i_phone].apply(clean_phone_number)
+                    df_phone_map = df_i.drop_duplicates(subset=['clean_name'])[['clean_name', 'clean_phone']]
+                    # st.toast 로드 성공 메시지는 너무 자주 뜨면 귀찮으니 생략하거나 sidebar에 표시
+        except Exception as e:
+            st.error(f"서버 연락처 파일 로드 중 오류: {e}")
 
     # 판매내역 로드 및 병합
     df_s = None
@@ -209,20 +240,7 @@ elif menu == "📦 자동 채움 발주":
         if df_list:
             df_s = pd.concat(df_list, ignore_index=True)
             if len(up_sales_list) > 1:
-                st.toast(f"📄 파일 {len(up_sales_list)}개를 하나로 합쳤습니다!", icon="✅")
-
-    # 연락처 로드
-    df_phone_map = pd.DataFrame()
-    if up_info:
-        df_i, _ = load_data_smart(up_info, 'info')
-        if df_i is not None:
-            i_name = next((c for c in df_i.columns if '농가명' in c), None)
-            i_phone = next((c for c in df_i.columns if '휴대전화' in c or '전화' in c), None)
-            if i_name and i_phone:
-                df_i['clean_name'] = df_i[i_name].astype(str).str.replace(' ', '')
-                df_i['clean_phone'] = df_i[i_phone].apply(clean_phone_number)
-                df_phone_map = df_i.drop_duplicates(subset=['clean_name'])[['clean_name', 'clean_phone']]
-                st.toast(f"📞 업체 연락처 {len(df_phone_map)}건 로드 완료!", icon="✅")
+                st.toast(f"📄 파일 {len(up_sales_list)}개 합산 완료!", icon="✅")
 
     if df_s is not None:
         s_item, s_qty, s_amt, s_farmer = detect_columns(df_s.columns.tolist())
@@ -272,7 +290,7 @@ elif menu == "📦 자동 채움 발주":
             agg_item['예상매입액'] = agg_item['발주량'] * agg_item['추정매입가']
             
             # =================================================================================
-            # [UI] 탭 구성 (외부 / 지족)
+            # [UI] 탭 구성
             # =================================================================================
             tab1, tab2 = st.tabs(["🏢 외부업체 건별 발주", "🏪 지족 사입 건별 발주"])
             
