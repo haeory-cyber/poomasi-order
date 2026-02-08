@@ -12,7 +12,7 @@ import requests
 import numpy as np
 
 # ==========================================
-# [중요] 발주 대상 업체 리스트 (업데이트됨)
+# [중요] 발주 대상 업체 리스트
 # ==========================================
 VALID_SUPPLIERS = [
     "(영)옥천친환경농업인연합사업단", "(주)가보트레이딩", "(주)건강생활연구소", "(주)기운찬", "(주)열두달",
@@ -116,6 +116,17 @@ def load_data_smart(file_obj, type='sales'):
             return pd.read_excel(file_obj) if file_obj.name.endswith('xlsx') else pd.read_csv(file_obj), "헤더 못 찾음(기본로드)"
         except: return df_raw, "헤더 못 찾음"
 
+# [NEW] 숫자 세탁기 함수 (콤마, 문자 제거)
+def to_clean_number(x):
+    try:
+        if pd.isna(x) or str(x).strip() == '': return 0
+        # 콤마, 원, 개, 공백 등 숫자와 점(.) 마이너스(-) 빼고 다 제거
+        clean_str = re.sub(r'[^0-9.-]', '', str(x))
+        if clean_str == '' or clean_str == '.': return 0
+        return float(clean_str)
+    except:
+        return 0
+
 # ==========================================
 # 1. [기본 설정 및 사이드바]
 # ==========================================
@@ -208,6 +219,7 @@ if menu == "📢 마케팅 & 문자발송":
                     final_df = loyal
                     final_df['전화번호'] = '-'
                     final_df.columns = ['이름', '비고', '전화번호']
+
     else:
         if df_member is None: st.info("👈 왼쪽에서 [회원명부] 파일을 올려주세요.")
         else:
@@ -323,10 +335,11 @@ elif menu == "📦 자동 채움 발주":
                     st.warning("⚠️ '농가/공급자' 컬럼이 없어 필터링 없이 진행합니다.")
                     df_target = df_s.copy()
 
-                # 2. 데이터 집계 (업체별 + 상품별)
-                df_target[s_qty] = pd.to_numeric(df_target[s_qty], errors='coerce').fillna(0)
-                df_target[s_amt] = pd.to_numeric(df_target[s_amt], errors='coerce').fillna(0)
+                # [NEW] 2. 데이터 세탁 (콤마 제거)
+                df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
+                df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
                 
+                # 3. 데이터 집계
                 groupby_cols = [s_farmer, s_item] if s_farmer else [s_item]
                 agg = df_target.groupby(groupby_cols)[[s_qty, s_amt]].sum().reset_index()
                 
@@ -338,13 +351,13 @@ elif menu == "📦 자동 채움 발주":
 
                 agg = agg[agg['판매량'] > 0]
 
-                # 3. 계산
+                # 4. 계산
                 agg['평균판매가'] = agg['총판매액'] / agg['판매량']
                 agg['추정매입가'] = agg['평균판매가'] * purchase_rate
                 agg['발주량'] = np.ceil(agg['판매량'] * safety)
                 agg['예상매입액'] = agg['발주량'] * agg['추정매입가']
                 
-                # 4. [NEW] 화면 분할 (요약 vs 상세)
+                # 5. 화면 분할 (요약 vs 상세)
                 tab1, tab2 = st.tabs(["📋 품목별 상세 발주 (수정)", "🏢 업체별 요약 (확인)"])
                 
                 # --- Tab 1: 상세 수정 ---
