@@ -193,151 +193,162 @@ elif menu == "📦 자동 채움 발주":
         purchase_rate = purchase_rate_pct / 100.0
         
         st.subheader("📂 파일 업로드")
-        up_sales = st.file_uploader("1. 어제 판매내역 (포스)", type=['xlsx', 'csv'], key='ord_sales')
+        # [NEW] accept_multiple_files=True 적용
+        up_sales_list = st.file_uploader("1. 판매내역 (여러 개 가능)", type=['xlsx', 'csv'], key='ord_sales', accept_multiple_files=True)
         up_info = st.file_uploader("2. 업체 연락처 (농가관리 목록)", type=['xlsx', 'csv'], key='ord_info')
 
-    if up_sales:
-        df_s, _ = load_data_smart(up_sales, 'sales')
+    # 판매내역 로드 및 병합
+    df_s = None
+    if up_sales_list:
+        df_list = []
+        for file_obj in up_sales_list:
+            d, _ = load_data_smart(file_obj, 'sales')
+            if d is not None:
+                df_list.append(d)
         
-        # 연락처 로드
-        df_phone_map = pd.DataFrame()
-        if up_info:
-            df_i, _ = load_data_smart(up_info, 'info')
-            if df_i is not None:
-                i_name = next((c for c in df_i.columns if '농가명' in c), None)
-                i_phone = next((c for c in df_i.columns if '휴대전화' in c or '전화' in c), None)
-                if i_name and i_phone:
-                    df_i['clean_name'] = df_i[i_name].astype(str).str.replace(' ', '')
-                    df_i['clean_phone'] = df_i[i_phone].apply(clean_phone_number)
-                    df_phone_map = df_i.drop_duplicates(subset=['clean_name'])[['clean_name', 'clean_phone']]
-                    st.toast(f"📞 업체 연락처 {len(df_phone_map)}건 로드 완료!", icon="✅")
-        
-        if df_s is not None:
-            s_item, s_qty, s_amt, s_farmer = detect_columns(df_s.columns.tolist())
-            
-            if s_item and s_qty and s_amt:
-                if s_farmer:
-                    valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
-                    df_s['clean_farmer'] = df_s[s_farmer].astype(str).str.replace(' ', '')
-                    
-                    def classify_supplier(name):
-                        if "지족" in name: return "지족(사입)"
-                        elif name in valid_set: return "일반업체"
-                        else: return "제외"
+        if df_list:
+            df_s = pd.concat(df_list, ignore_index=True)
+            if len(up_sales_list) > 1:
+                st.toast(f"📄 파일 {len(up_sales_list)}개를 하나로 합쳤습니다!", icon="✅")
 
-                    df_s['구분'] = df_s['clean_farmer'].apply(classify_supplier)
-                    df_target = df_s[df_s['구분'] != "제외"].copy()
-                    
-                    if not df_phone_map.empty:
-                        df_target = pd.merge(df_target, df_phone_map, left_on='clean_farmer', right_on='clean_name', how='left')
-                        df_target.rename(columns={'clean_phone': '전화번호'}, inplace=True)
-                    else:
-                        df_target['전화번호'] = ''
+    # 연락처 로드
+    df_phone_map = pd.DataFrame()
+    if up_info:
+        df_i, _ = load_data_smart(up_info, 'info')
+        if df_i is not None:
+            i_name = next((c for c in df_i.columns if '농가명' in c), None)
+            i_phone = next((c for c in df_i.columns if '휴대전화' in c or '전화' in c), None)
+            if i_name and i_phone:
+                df_i['clean_name'] = df_i[i_name].astype(str).str.replace(' ', '')
+                df_i['clean_phone'] = df_i[i_phone].apply(clean_phone_number)
+                df_phone_map = df_i.drop_duplicates(subset=['clean_name'])[['clean_name', 'clean_phone']]
+                st.toast(f"📞 업체 연락처 {len(df_phone_map)}건 로드 완료!", icon="✅")
+
+    if df_s is not None:
+        s_item, s_qty, s_amt, s_farmer = detect_columns(df_s.columns.tolist())
+        
+        if s_item and s_qty and s_amt:
+            if s_farmer:
+                valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
+                df_s['clean_farmer'] = df_s[s_farmer].astype(str).str.replace(' ', '')
+                
+                def classify_supplier(name):
+                    if "지족" in name: return "지족(사입)"
+                    elif name in valid_set: return "일반업체"
+                    else: return "제외"
+
+                df_s['구분'] = df_s['clean_farmer'].apply(classify_supplier)
+                df_target = df_s[df_s['구분'] != "제외"].copy()
+                
+                if not df_phone_map.empty:
+                    df_target = pd.merge(df_target, df_phone_map, left_on='clean_farmer', right_on='clean_name', how='left')
+                    df_target.rename(columns={'clean_phone': '전화번호'}, inplace=True)
                 else:
-                    df_target = df_s.copy()
-                    df_target['구분'] = "일반업체"
                     df_target['전화번호'] = ''
+            else:
+                df_target = df_s.copy()
+                df_target['구분'] = "일반업체"
+                df_target['전화번호'] = ''
 
-                df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
-                df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
+            df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
+            df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
+            
+            groupby_cols = [s_farmer, s_item, '구분']
+            agg_item = df_target.groupby(groupby_cols)[[s_qty, s_amt]].sum().reset_index()
+            
+            if not df_phone_map.empty and s_farmer:
+                agg_item['clean_farmer'] = agg_item[s_farmer].astype(str).str.replace(' ', '')
+                agg_item = pd.merge(agg_item, df_phone_map, left_on='clean_farmer', right_on='clean_name', how='left')
+                agg_item.rename(columns={'clean_phone': '전화번호'}, inplace=True)
+            else:
+                agg_item['전화번호'] = ''
+            
+            agg_item.rename(columns={s_farmer: '업체명', s_item: '상품명', s_qty: '판매량', s_amt: '총판매액'}, inplace=True)
+            agg_item = agg_item[agg_item['판매량'] > 0]
+            
+            agg_item['평균판매가'] = agg_item['총판매액'] / agg_item['판매량']
+            agg_item['추정매입가'] = agg_item['평균판매가'] * purchase_rate
+            agg_item['발주량'] = np.ceil(agg_item['판매량'] * safety)
+            agg_item['예상매입액'] = agg_item['발주량'] * agg_item['추정매입가']
+            
+            # =================================================================================
+            # [UI] 탭 구성 (외부 / 지족)
+            # =================================================================================
+            tab1, tab2 = st.tabs(["🏢 외부업체 건별 발주", "🏪 지족 사입 건별 발주"])
+            
+            # 공통 렌더링 함수
+            def render_order_tab(target_group_name, tab_key):
+                df_tab = agg_item[agg_item['구분'] == target_group_name].copy()
                 
-                groupby_cols = [s_farmer, s_item, '구분']
-                agg_item = df_target.groupby(groupby_cols)[[s_qty, s_amt]].sum().reset_index()
+                if df_tab.empty:
+                    st.info(f"{target_group_name} 대상 품목이 없습니다.")
+                    return
+
+                st.markdown(f"### 📝 {target_group_name} 문자 발주")
                 
-                if not df_phone_map.empty and s_farmer:
-                    agg_item['clean_farmer'] = agg_item[s_farmer].astype(str).str.replace(' ', '')
-                    agg_item = pd.merge(agg_item, df_phone_map, left_on='clean_farmer', right_on='clean_name', how='left')
-                    agg_item.rename(columns={'clean_phone': '전화번호'}, inplace=True)
-                else:
-                    agg_item['전화번호'] = ''
-                
-                agg_item.rename(columns={s_farmer: '업체명', s_item: '상품명', s_qty: '판매량', s_amt: '총판매액'}, inplace=True)
-                agg_item = agg_item[agg_item['판매량'] > 0]
-                
-                agg_item['평균판매가'] = agg_item['총판매액'] / agg_item['판매량']
-                agg_item['추정매입가'] = agg_item['평균판매가'] * purchase_rate
-                agg_item['발주량'] = np.ceil(agg_item['판매량'] * safety)
-                agg_item['예상매입액'] = agg_item['발주량'] * agg_item['추정매입가']
-                
-                # =================================================================================
-                # [UI] 탭 구성
-                # =================================================================================
-                tab1, tab2 = st.tabs(["🏢 외부업체 건별 발주", "🏪 지족 사입 건별 발주"])
-                
-                # 함수: 탭 내부 렌더링 (외부/지족 공통 로직)
-                def render_order_tab(target_group_name, tab_key):
-                    df_tab = agg_item[agg_item['구분'] == target_group_name].copy()
+                # 검색창
+                search_term = st.text_input(f"🔍 {target_group_name} 검색", key=f"search_{tab_key}")
+                all_vendors = sorted(df_tab['업체명'].unique())
+                target_vendors = [v for v in all_vendors if search_term in v] if search_term else all_vendors
+
+                st.markdown("---")
+
+                for vendor in target_vendors:
+                    is_sent = vendor in st.session_state.sent_history
+                    v_data = df_tab[df_tab['업체명'] == vendor]
+                    default_phone = str(v_data['전화번호'].iloc[0]) if not pd.isna(v_data['전화번호'].iloc[0]) else ''
                     
-                    if df_tab.empty:
-                        st.info(f"{target_group_name} 대상 품목이 없습니다.")
-                        return
-
-                    st.markdown(f"### 📝 {target_group_name} 문자 발주")
+                    msg_lines = [f"[{vendor} 발주]"]
+                    for _, row in v_data.iterrows():
+                        msg_lines.append(f"- {row['상품명']}: {int(row['발주량'])}")
+                    msg_lines.append("잘 부탁드립니다!")
+                    default_msg = "\n".join(msg_lines)
                     
-                    # 검색창
-                    search_term = st.text_input(f"🔍 {target_group_name} 검색", key=f"search_{tab_key}")
-                    all_vendors = sorted(df_tab['업체명'].unique())
-                    target_vendors = [v for v in all_vendors if search_term in v] if search_term else all_vendors
-
-                    st.markdown("---")
-
-                    for vendor in target_vendors:
-                        is_sent = vendor in st.session_state.sent_history
-                        v_data = df_tab[df_tab['업체명'] == vendor]
-                        default_phone = str(v_data['전화번호'].iloc[0]) if not pd.isna(v_data['전화번호'].iloc[0]) else ''
+                    icon = "✅" if is_sent else "📩"
+                    label = f"{icon} {vendor} (총 {len(v_data)}품목)"
+                    
+                    with st.expander(label, expanded=not is_sent):
+                        c1, c2 = st.columns([1, 2])
                         
-                        msg_lines = [f"[{vendor} 발주]"]
-                        for _, row in v_data.iterrows():
-                            msg_lines.append(f"- {row['상품명']}: {int(row['발주량'])}")
-                        msg_lines.append("잘 부탁드립니다!")
-                        default_msg = "\n".join(msg_lines)
-                        
-                        icon = "✅" if is_sent else "📩"
-                        label = f"{icon} {vendor} (총 {len(v_data)}품목)"
-                        
-                        with st.expander(label, expanded=not is_sent):
-                            c1, c2 = st.columns([1, 2])
+                        with c1:
+                            input_phone = st.text_input("전화번호", value=default_phone, key=f"phone_{tab_key}_{vendor}")
                             
-                            with c1:
-                                input_phone = st.text_input("전화번호", value=default_phone, key=f"phone_{tab_key}_{vendor}")
-                                
-                                if is_sent:
-                                    st.success("발송 완료됨")
-                                else:
-                                    if st.button(f"🚀 {vendor} 전송", key=f"btn_{tab_key}_{vendor}", type="primary"):
-                                        if not api_key or not api_secret or not sender_number:
-                                            st.error("API Key와 발신번호 필요!")
+                            if is_sent:
+                                st.success("발송 완료됨")
+                            else:
+                                if st.button(f"🚀 {vendor} 전송", key=f"btn_{tab_key}_{vendor}", type="primary"):
+                                    if not api_key or not api_secret or not sender_number:
+                                        st.error("API Key와 발신번호 필요!")
+                                    else:
+                                        clean_p = clean_phone_number(input_phone)
+                                        final_msg = st.session_state.get(f"msg_{tab_key}_{vendor}", default_msg)
+                                        
+                                        if len(clean_p) < 10:
+                                            st.error("전화번호 확인 필요")
                                         else:
-                                            clean_p = clean_phone_number(input_phone)
-                                            final_msg = st.session_state.get(f"msg_{tab_key}_{vendor}", default_msg)
-                                            
-                                            if len(clean_p) < 10:
-                                                st.error("전화번호 확인 필요")
+                                            ok, res = send_coolsms_direct(api_key, api_secret, sender_number, clean_p, final_msg)
+                                            if ok:
+                                                st.session_state.sent_history.add(vendor)
+                                                st.rerun()
                                             else:
-                                                ok, res = send_coolsms_direct(api_key, api_secret, sender_number, clean_p, final_msg)
-                                                if ok:
-                                                    st.session_state.sent_history.add(vendor)
-                                                    st.rerun()
-                                                else:
-                                                    st.error(f"실패: {res.get('errorMessage')}")
+                                                st.error(f"실패: {res.get('errorMessage')}")
 
-                            with c2:
-                                st.text_area("내용 수정", value=default_msg, height=150, key=f"msg_{tab_key}_{vendor}")
+                        with c2:
+                            st.text_area("내용 수정", value=default_msg, height=150, key=f"msg_{tab_key}_{vendor}")
 
-                    # 요약 통계
-                    st.markdown("---")
-                    st.markdown(f"### 📊 {target_group_name} 요약")
-                    total_tab = (df_tab['발주량'] * df_tab['추정매입가']).sum()
-                    st.metric("총 발주 예상액", f"{total_tab:,.0f}원")
-
-                # --- Tab 1: 외부 업체 ---
                 with tab1:
                     render_order_tab("일반업체", "ext")
 
-                # --- Tab 2: 지족 사입 ---
                 with tab2:
                     render_order_tab("지족(사입)", "int")
+                    
+                st.markdown("---")
+                st.markdown("### 📊 전체 요약")
+                total_all = (agg_item['발주량'] * agg_item['추정매입가']).sum()
+                c1, c2 = st.columns(2)
+                c1.metric("총 발주 예상액", f"{total_all:,.0f}원")
+                c2.metric("예산 잔액", f"{budget - total_all:,.0f}원")
 
-            else: st.error("컬럼 감지 실패! (디버그 창 확인)")
+        else: st.error("컬럼 감지 실패! (디버그 창 확인)")
     else:
-        st.info("👈 왼쪽에서 '어제 판매내역' 파일을 업로드해주세요.")
+        st.info("👈 왼쪽에서 '판매내역' 파일을 업로드해주세요.")
