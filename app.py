@@ -146,6 +146,10 @@ def detect_columns(df_columns):
 # ==========================================
 st.set_page_config(page_title="시다비서 (시비)", page_icon="🤖", layout="wide")
 
+# 세션 상태 초기화 (발송 완료 체크용)
+if 'sent_history' not in st.session_state:
+    st.session_state.sent_history = set()
+
 with st.sidebar:
     st.header("🔒 시다비서(시비) 로그인")
     password = st.text_input("비밀번호", type="password")
@@ -179,8 +183,8 @@ if menu == "📢 마케팅 & 문자발송":
 # 3. [기능 2] 자동 발주 시스템
 # ==========================================
 elif menu == "📦 자동 채움 발주":
-    st.title("📦 시다비서: 자동 채움 발주 + 문자 발송")
-    st.markdown("##### **'채움(Fill)'**: 판매 데이터 분석 $\\rightarrow$ 업체별 자동 문자 발주")
+    st.title("📦 시다비서: 자동 채움 발주 + 안심 문자")
+    st.markdown("##### **'채움(Fill)'**: 판매 데이터 분석 $\\rightarrow$ **건별 확인 후** 문자 발주")
     
     with st.sidebar:
         st.subheader("⚙️ 계산 설정")
@@ -201,10 +205,8 @@ elif menu == "📦 자동 채움 발주":
         if up_info:
             df_i, _ = load_data_smart(up_info, 'info')
             if df_i is not None:
-                # 필요한 컬럼 찾기
                 i_name = next((c for c in df_i.columns if '농가명' in c), None)
                 i_phone = next((c for c in df_i.columns if '휴대전화' in c or '전화' in c), None)
-                
                 if i_name and i_phone:
                     df_i['clean_name'] = df_i[i_name].astype(str).str.replace(' ', '')
                     df_i['clean_phone'] = df_i[i_phone].apply(clean_phone_number)
@@ -233,22 +235,17 @@ elif menu == "📦 자동 채움 발주":
                         df_target.rename(columns={'clean_phone': '전화번호'}, inplace=True)
                     else:
                         df_target['전화번호'] = ''
-                        
                 else:
                     df_target = df_s.copy()
                     df_target['구분'] = "일반업체"
                     df_target['전화번호'] = ''
 
-                # 데이터 세탁 & 집계
                 df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
                 df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
                 
-                # 1차 집계: 상품별
-                # groupby 후 sum()을 하면 컬럼명이 s_qty, s_amt로 유지됨
                 groupby_cols = [s_farmer, s_item, '구분']
                 agg_item = df_target.groupby(groupby_cols)[[s_qty, s_amt]].sum().reset_index()
                 
-                # 연락처 다시 매핑 (집계 과정에서 손실 방지)
                 if not df_phone_map.empty and s_farmer:
                     agg_item['clean_farmer'] = agg_item[s_farmer].astype(str).str.replace(' ', '')
                     agg_item = pd.merge(agg_item, df_phone_map, left_on='clean_farmer', right_on='clean_name', how='left')
@@ -256,119 +253,92 @@ elif menu == "📦 자동 채움 발주":
                 else:
                     agg_item['전화번호'] = ''
                 
-                # [수정된 부분] 컬럼 이름 표준화 (이게 빠져서 에러가 났었습니다!)
-                agg_item.rename(columns={
-                    s_farmer: '업체명',
-                    s_item: '상품명',
-                    s_qty: '판매량',
-                    s_amt: '총판매액'
-                }, inplace=True)
-                
-                # 이제 '판매량' 컬럼이 생겼으므로 안전하게 필터링
+                agg_item.rename(columns={s_farmer: '업체명', s_item: '상품명', s_qty: '판매량', s_amt: '총판매액'}, inplace=True)
                 agg_item = agg_item[agg_item['판매량'] > 0]
                 
-                # 계산
                 agg_item['평균판매가'] = agg_item['총판매액'] / agg_item['판매량']
                 agg_item['추정매입가'] = agg_item['평균판매가'] * purchase_rate
                 agg_item['발주량'] = np.ceil(agg_item['판매량'] * safety)
                 agg_item['예상매입액'] = agg_item['발주량'] * agg_item['추정매입가']
                 
-                # --- Tab 1: 외부 업체 ---
-                tab1, tab2 = st.tabs(["🏢 외부업체 발주 (문자발송)", "🏪 지족 사입 & 요약"])
+                # =================================================================================
+                # [UI] 탭 구성
+                # =================================================================================
+                tab1, tab2 = st.tabs(["🏢 외부업체 건별 발주", "🏪 지족 사입 & 요약"])
                 
+                # --- Tab 1: 외부 업체 (안심 발송 모드) ---
                 with tab1:
-                    st.markdown("### 🏢 외부 협력업체 발주서")
                     df_ext = agg_item[agg_item['구분'] == '일반업체'].copy()
                     
                     if df_ext.empty:
                         st.info("발주 대상 외부 업체가 없습니다.")
                     else:
-                        st.markdown("#### 1️⃣ 수량 확인 및 수정")
-                        # 에디터에서 수량 수정
-                        edited_ext = st.data_editor(
-                            df_ext[['업체명', '상품명', '판매량', '발주량', '예상매입액', '전화번호']],
-                            column_config={
-                                "업체명": st.column_config.TextColumn(disabled=True),
-                                "상품명": st.column_config.TextColumn(disabled=True),
-                                "발주량": st.column_config.NumberColumn(min_value=0, step=1),
-                                "전화번호": st.column_config.TextColumn(disabled=True),
-                                "예상매입액": st.column_config.NumberColumn(format="%d원", disabled=True),
-                            },
-                            use_container_width=True, hide_index=True, height=400
-                        )
+                        st.markdown("### 📝 업체별 발주 문자 확인 & 전송")
+                        st.caption("아래 카드에서 내용을 확인하고, 하나씩 전송하세요. 번호 수정도 가능합니다.")
                         
-                        st.markdown("---")
-                        st.markdown("#### 2️⃣ 발주 문자 보내기 (번호 수정 가능)")
+                        # 업체 리스트
+                        vendors = sorted(df_ext['업체명'].unique())
                         
-                        final_order_list = edited_ext[edited_ext['발주량'] > 0]
-                        
-                        if final_order_list.empty:
-                            st.warning("발주할 수량이 없습니다.")
-                        else:
-                            sms_prep_list = []
-                            for vendor, group in final_order_list.groupby('업체명'):
-                                phone_num = str(group['전화번호'].iloc[0]) if not pd.isna(group['전화번호'].iloc[0]) else ''
+                        for vendor in vendors:
+                            # 이미 보낸 업체인지 확인
+                            is_sent = vendor in st.session_state.sent_history
+                            
+                            # 업체별 데이터
+                            v_data = df_ext[df_ext['업체명'] == vendor]
+                            default_phone = str(v_data['전화번호'].iloc[0]) if not pd.isna(v_data['전화번호'].iloc[0]) else ''
+                            
+                            # 기본 문자 메시지 생성
+                            msg_lines = [f"[{vendor} 발주]"]
+                            for _, row in v_data.iterrows():
+                                msg_lines.append(f"- {row['상품명']}: {int(row['발주량'])}")
+                            msg_lines.append("잘 부탁드립니다!")
+                            default_msg = "\n".join(msg_lines)
+                            
+                            # --- 카드형 UI (Expander) ---
+                            # 보낸 건은 초록색 체크, 안 보낸 건 빨간색 느낌표
+                            icon = "✅" if is_sent else "📩"
+                            label = f"{icon} {vendor} (총 {len(v_data)}품목)"
+                            
+                            with st.expander(label, expanded=not is_sent):
+                                c1, c2 = st.columns([1, 2])
                                 
-                                msg_lines = [f"[{vendor} 발주]"]
-                                total_items = 0
-                                for _, row in group.iterrows():
-                                    msg_lines.append(f"- {row['상품명']}: {int(row['발주량'])}")
-                                    total_items += 1
-                                msg_lines.append(f"총 {total_items}종. 잘 부탁드립니다!")
-                                full_msg = "\n".join(msg_lines)
-                                
-                                sms_prep_list.append({
-                                    "업체명": vendor,
-                                    "전화번호": phone_num,
-                                    "발송내용": full_msg,
-                                    "전송": False
-                                })
-                            
-                            df_sms_prep = pd.DataFrame(sms_prep_list)
-                            
-                            edited_sms_list = st.data_editor(
-                                df_sms_prep,
-                                column_config={
-                                    "업체명": st.column_config.TextColumn(disabled=True),
-                                    "전화번호": st.column_config.TextColumn(required=True, help="수정 가능"),
-                                    "발송내용": st.column_config.TextColumn(width="large"),
-                                    "전송": st.column_config.CheckboxColumn(label="선택", default=True)
-                                },
-                                use_container_width=True, hide_index=True
-                            )
-                            
-                            col_btn, col_info = st.columns([1, 3])
-                            with col_btn:
-                                if st.button("🚀 선택한 업체에 문자 발송", type="primary"):
-                                    if not api_key or not api_secret or not sender_number:
-                                        st.error("사이드바에 API Key와 발신번호를 입력해주세요!")
+                                with c1:
+                                    # 전화번호 입력 (수정 가능)
+                                    input_phone = st.text_input("전화번호", value=default_phone, key=f"phone_{vendor}")
+                                    
+                                    # 상태 표시
+                                    if is_sent:
+                                        st.success("발송 완료된 업체입니다.")
                                     else:
-                                        targets = edited_sms_list[edited_sms_list['전송'] == True]
-                                        if targets.empty:
-                                            st.warning("선택된 업체가 없습니다.")
-                                        else:
-                                            success_count = 0
-                                            progress_bar = st.progress(0)
-                                            
-                                            for i, row in enumerate(targets.itertuples()):
-                                                p_num = clean_phone_number(row.전화번호)
-                                                if len(p_num) < 10:
-                                                    st.toast(f"❌ {row.업체명}: 번호 오류")
-                                                    continue
-                                                    
-                                                ok, res = send_coolsms_direct(api_key, api_secret, sender_number, p_num, row.발송내용)
-                                                if ok: success_count += 1
-                                                else: st.toast(f"❌ {row.업체명} 실패: {res.get('errorMessage')}")
+                                        # 전송 버튼
+                                        if st.button(f"🚀 {vendor} 전송하기", key=f"btn_{vendor}", type="primary"):
+                                            if not api_key or not api_secret or not sender_number:
+                                                st.error("API Key와 발신번호를 입력하세요!")
+                                            else:
+                                                clean_p = clean_phone_number(input_phone)
+                                                # 여기서 메시지는 아래 텍스트 에어리어의 값을 가져와야 함 (st.session_state 이용)
+                                                final_msg = st.session_state.get(f"msg_{vendor}", default_msg)
                                                 
-                                                progress_bar.progress((i + 1) / len(targets))
-                                            
-                                            st.success(f"총 {len(targets)}건 중 {success_count}건 발송 성공!")
+                                                if len(clean_p) < 10:
+                                                    st.error("전화번호를 확인해주세요.")
+                                                else:
+                                                    ok, res = send_coolsms_direct(api_key, api_secret, sender_number, clean_p, final_msg)
+                                                    if ok:
+                                                        st.session_state.sent_history.add(vendor)
+                                                        st.rerun() # 상태 업데이트를 위해 리런
+                                                    else:
+                                                        st.error(f"전송 실패: {res.get('errorMessage')}")
 
+                                with c2:
+                                    # 문자 내용 수정 (Text Area)
+                                    st.text_area("문자 내용 (수정 가능)", value=default_msg, height=150, key=f"msg_{vendor}")
+
+                # --- Tab 2: 지족 사입 & 요약 ---
                 with tab2:
                     st.markdown("### 🏪 지족점 사입 (내부용)")
                     df_int = agg_item[agg_item['구분'] == '지족(사입)'].copy()
                     if not df_int.empty:
-                        st.data_editor(df_int[['상품명', '판매량', '발주량', '예상매입액']], hide_index=True)
+                        st.dataframe(df_int[['상품명', '판매량', '발주량', '예상매입액']], use_container_width=True)
                         total_int = (df_int['발주량'] * df_int['추정매입가']).sum()
                         st.info(f"사입 예산 합계: {total_int:,.0f}원")
                     else:
