@@ -12,12 +12,12 @@ import requests
 import numpy as np
 
 # ==========================================
-# [설정] 서버 연락처 파일명
+# [설정] 서버 파일 경로
 # ==========================================
 SERVER_CONTACT_FILE = "농가관리 목록_20260208 (전체).xlsx"
 
 # ==========================================
-# [중요] 발주 대상 업체 리스트 (화이트리스트)
+# [중요] 발주 대상 업체 (화이트리스트)
 # ==========================================
 VALID_SUPPLIERS = [
     "(주)가보트레이딩", "(주)열두달", "(주)우리밀", "(주)윈윈농수산", "(주)유기샘",
@@ -73,7 +73,8 @@ def load_data_smart(file_obj, type='sales'):
         except: return None, "읽기 실패"
 
     target_row_idx = -1
-    keywords = ['농가', '공급자', '생산자', '상품', '품목'] if type == 'sales' else ['농가명', '휴대전화', '전화번호']
+    keywords = ['농가', '공급자', '생산자', '상품', '품목'] if type == 'sales' else \
+               ['회원번호', '이름', '휴대전화'] if type == 'member' else ['농가명', '휴대전화', '전화번호']
     
     for idx, row in df_raw.head(20).iterrows():
         row_str = row.astype(str).str.cat(sep=' ')
@@ -102,7 +103,8 @@ def to_clean_number(x):
 
 def detect_columns(df_columns):
     s_item = next((c for c in df_columns if any(x in c for x in ['상품', '품목'])), None)
-    s_qty = next((c for c in df_columns if any(x in c for x in ['수량', '개수'])), None)
+    s_qty = next((c for c in df_columns if any(x in c for x in ['판매수량', '총수량'])), None)
+    if not s_qty: s_qty = next((c for c in df_columns if any(x in c for x in ['수량', '개수'])), None)
     
     exclude = ['할인', '반품', '취소', '면세', '과세', '부가세']
     candidates = [c for c in df_columns if ('총' in c and ('판매' in c or '매출' in c))] + \
@@ -119,8 +121,11 @@ def detect_columns(df_columns):
 st.set_page_config(page_title="시다비서 (시비)", page_icon="🤖", layout="wide")
 
 if 'sent_history' not in st.session_state: st.session_state.sent_history = set()
+# API 설정값 유지를 위한 세션
+if 'api_key' not in st.session_state: st.session_state.api_key = ''
+if 'api_secret' not in st.session_state: st.session_state.api_secret = ''
+if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
-# 로그인 (사이드바에 최소화)
 with st.sidebar:
     st.header("🔒 로그인")
     password = st.text_input("비밀번호", type="password")
@@ -129,55 +134,46 @@ with st.sidebar:
         st.stop()
     st.success("접속 완료")
     st.divider()
-    st.caption("Developed for Local Food 2.0")
+    st.caption("Local Food 2.0 Sida Works")
 
 # ==========================================
-# 2. [상단 컨트롤 대시보드]
+# 2. [메인 대시보드]
 # ==========================================
 st.title("🤖 시다비서 (Sida Works)")
 
-# (1) 업무 선택 (가로형)
+# 업무 선택
 menu = st.radio("### 1️⃣ 업무를 선택하세요", ["📦 자동 채움 발주", "📢 마케팅 & 문자"], horizontal=True)
 
+# ---------------------------------------------------------------------------------
+# [기능 A] 자동 발주 시스템
+# ---------------------------------------------------------------------------------
 if menu == "📦 자동 채움 발주":
-    # (2) 설정 패널 (메인 상단 고정)
+    # 컨트롤 패널
     with st.container(border=True):
         col_set1, col_set2, col_set3 = st.columns([2, 1, 1])
-        
         with col_set1:
-            st.markdown("##### ⚙️ 발주 기준 설정")
+            st.markdown("##### ⚙️ 발주 기준")
             c1, c2, c3 = st.columns(3)
             budget = c1.number_input("💰 예산 (원)", value=500000, step=10000)
-            safety = c2.slider("📈 안전 계수 (배)", 1.0, 1.5, 1.1, step=0.1)
-            purchase_rate = c3.slider("📊 매입 원가율 (%)", 10, 100, 70, step=5) / 100.0
-            
-            show_all_data = st.checkbox("🕵️‍♂️ 모든 데이터 보기 (필터 해제)", help="화면이 비어있으면 체크하세요!")
-
+            safety = c2.slider("📈 안전 계수", 1.0, 1.5, 1.1, step=0.1)
+            purchase_rate = c3.slider("📊 매입 원가율", 10, 100, 70, step=5) / 100.0
+            show_all_data = st.checkbox("🕵️‍♂️ 모든 데이터 보기 (필터 해제)")
         with col_set2:
             st.markdown("##### 🔑 문자 설정")
-            api_key = st.text_input("API Key", type="password").strip()
-            api_secret = st.text_input("API Secret", type="password").strip()
-            
+            st.session_state.api_key = st.text_input("API Key", value=st.session_state.api_key, type="password")
+            st.session_state.api_secret = st.text_input("API Secret", value=st.session_state.api_secret, type="password")
         with col_set3:
             st.markdown("##### 📱 발신번호")
-            sender_number = st.text_input("숫자만 입력").strip()
-            sender_number = re.sub(r'[^0-9]', '', sender_number)
+            st.session_state.sender_number = st.text_input("숫자만 입력", value=st.session_state.sender_number)
 
-    # (3) 파일 업로드 (Expander로 숨김 처리 가능)
-    with st.expander("📂 **[2단계] 파일 업로드 (여기를 눌러 판매 데이터를 넣으세요)**", expanded=True):
-        up_sales_list = st.file_uploader("판매 실적 파일 (여러 개 드래그 가능)", type=['xlsx', 'csv'], accept_multiple_files=True)
-        
-        # 서버 파일 확인
+    # 파일 업로드
+    with st.expander("📂 **[2단계] 파일 업로드 (판매 실적)**", expanded=True):
+        up_sales_list = st.file_uploader("판매 실적 파일 (여러 개 가능)", type=['xlsx', 'csv'], accept_multiple_files=True, key='ord_up')
         if os.path.exists(SERVER_CONTACT_FILE):
-            st.success(f"📞 서버 연락처 파일 로드됨: {SERVER_CONTACT_FILE}")
-        else:
-            st.error(f"❌ 연락처 파일이 서버에 없습니다: {SERVER_CONTACT_FILE}")
+            st.success(f"📞 서버 연락처 로드됨: {SERVER_CONTACT_FILE}")
+        else: st.error("❌ 서버 연락처 파일 없음")
 
-    # ==========================================
-    # 3. [메인 데이터 로직]
-    # ==========================================
-    
-    # 연락처 로드
+    # (발주 로직 시작)
     df_phone_map = pd.DataFrame()
     if os.path.exists(SERVER_CONTACT_FILE):
         try:
@@ -192,7 +188,6 @@ if menu == "📦 자동 채움 발주":
                     df_phone_map = df_i.drop_duplicates(subset=['clean_name'])[['clean_name', 'clean_phone']]
         except: pass
 
-    # 판매내역 병합
     df_s = None
     if up_sales_list:
         df_list = []
@@ -202,23 +197,19 @@ if menu == "📦 자동 채움 발주":
         if df_list: df_s = pd.concat(df_list, ignore_index=True)
 
     if df_s is not None:
-        st.divider() # 구분선
+        st.divider()
         s_item, s_qty, s_amt, s_farmer = detect_columns(df_s.columns.tolist())
         
         if s_item and s_qty and s_amt:
-            # 분류 로직
             if s_farmer:
                 valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
                 df_s['clean_farmer'] = df_s[s_farmer].astype(str).str.replace(' ', '')
-                
                 def classify(name):
                     if "지족" in name: return "지족(사입)"
                     elif name in valid_set: return "일반업체"
                     else: return "제외" if not show_all_data else "일반업체(강제)"
-
                 df_s['구분'] = df_s['clean_farmer'].apply(classify)
                 df_target = df_s[df_s['구분'] != "제외"].copy()
-                
                 if not df_phone_map.empty:
                     df_target = pd.merge(df_target, df_phone_map, left_on='clean_farmer', right_on='clean_name', how='left')
                     df_target.rename(columns={'clean_phone': '전화번호'}, inplace=True)
@@ -228,7 +219,6 @@ if menu == "📦 자동 채움 발주":
                 df_target['구분'] = "일반업체"
                 df_target['전화번호'] = ''
 
-            # 데이터 정리
             df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
             df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
             
@@ -249,7 +239,6 @@ if menu == "📦 자동 채움 발주":
             agg_item['발주량'] = np.ceil(agg_item['판매량'] * safety)
             agg_item['예상매입액'] = agg_item['발주량'] * agg_item['추정매입가']
             
-            # --- 탭 구성 ---
             tab1, tab2 = st.tabs(["🏢 외부업체 건별 발주", "🏪 지족 사입 건별 발주"])
             
             def render_order_tab(target_groups, tab_key):
@@ -257,15 +246,11 @@ if menu == "📦 자동 채움 발주":
                 if df_tab.empty:
                     st.info("데이터 없음")
                     return
-
-                # 요약 통계 (상단 배치)
                 total_tab = (df_tab['발주량'] * df_tab['추정매입가']).sum()
                 c_t1, c_t2 = st.columns([3, 1])
                 c_t1.markdown(f"### 📋 {target_groups[0]} 발주 리스트")
                 c_t2.metric("그룹 합계", f"{total_tab:,.0f}원")
-
-                # 검색
-                search = st.text_input(f"🔍 업체명 검색", key=f"s_{tab_key}", placeholder="업체명 입력...")
+                search = st.text_input(f"🔍 업체명 검색", key=f"s_{tab_key}")
                 all_v = sorted(df_tab['업체명'].unique())
                 targets = [v for v in all_v if search in v] if search else all_v
 
@@ -273,12 +258,10 @@ if menu == "📦 자동 채움 발주":
                     is_sent = vendor in st.session_state.sent_history
                     v_data = df_tab[df_tab['업체명'] == vendor]
                     phone = str(v_data['전화번호'].iloc[0]) if not pd.isna(v_data['전화번호'].iloc[0]) else ''
-                    
                     msg_lines = [f"[{vendor} 발주]"]
                     for _, r in v_data.iterrows(): msg_lines.append(f"- {r['상품명']}: {int(r['발주량'])}")
                     msg_lines.append("잘 부탁드립니다!")
                     default_msg = "\n".join(msg_lines)
-                    
                     icon = "✅" if is_sent else "📩"
                     with st.expander(f"{icon} {vendor} ({len(v_data)}건)", expanded=not is_sent):
                         c1, c2 = st.columns([1, 2])
@@ -286,10 +269,10 @@ if menu == "📦 자동 채움 발주":
                             in_phone = st.text_input("전화번호", value=phone, key=f"p_{tab_key}_{vendor}")
                             if not is_sent:
                                 if st.button(f"🚀 전송", key=f"b_{tab_key}_{vendor}", type="primary"):
-                                    if not api_key or not sender_number: st.error("상단에 API키/발신번호 입력 필요")
+                                    if not st.session_state.api_key or not st.session_state.sender_number: st.error("상단에 API키/발신번호 입력 필요")
                                     else:
                                         final_msg = st.session_state.get(f"m_{tab_key}_{vendor}", default_msg)
-                                        ok, res = send_coolsms_direct(api_key, api_secret, sender_number, clean_phone_number(in_phone), final_msg)
+                                        ok, res = send_coolsms_direct(st.session_state.api_key, st.session_state.api_secret, st.session_state.sender_number, clean_phone_number(in_phone), final_msg)
                                         if ok:
                                             st.session_state.sent_history.add(vendor)
                                             st.rerun()
@@ -306,10 +289,136 @@ if menu == "📦 자동 채움 발주":
             c1, c2 = st.columns(2)
             c1.metric("💰 총 발주 예상액", f"{total_all:,.0f}원")
             c2.metric("💳 예산 잔액", f"{budget - total_all:,.0f}원", delta_color="normal" if budget >= total_all else "inverse")
-
         else: st.error("데이터 컬럼을 찾을 수 없습니다.")
-    else:
-        st.info("👆 위 **'파일 업로드'**를 눌러 판매 데이터를 올려주세요.")
+    else: st.info("👆 위 **'파일 업로드'**를 눌러 판매 데이터를 올려주세요.")
 
+# ---------------------------------------------------------------------------------
+# [기능 B] 마케팅 & 문자
+# ---------------------------------------------------------------------------------
 elif menu == "📢 마케팅 & 문자":
-    st.warning("🚧 마케팅 기능은 현재 통합 작업 중입니다. (이전 코드 사용 가능)")
+    # 컨트롤 패널 (마케팅용)
+    with st.container(border=True):
+        col_set1, col_set2 = st.columns([1, 1])
+        with col_set1:
+            st.markdown("##### 🔑 문자 설정")
+            st.session_state.api_key = st.text_input("API Key", value=st.session_state.api_key, type="password", key='mkt_key')
+            st.session_state.api_secret = st.text_input("API Secret", value=st.session_state.api_secret, type="password", key='mkt_sec')
+        with col_set2:
+            st.markdown("##### 📱 발신번호")
+            st.session_state.sender_number = st.text_input("숫자만 입력", value=st.session_state.sender_number, key='mkt_sender')
+
+    # 파일 업로드
+    with st.expander("📂 **[2단계] 파일 업로드 (마케팅용)**", expanded=True):
+        c1, c2 = st.columns(2)
+        up_mkt_sales = c1.file_uploader("1. 판매내역 (타겟팅)", type=['xlsx', 'csv'], key='mkt_s')
+        up_mkt_mem = c2.file_uploader("2. 회원명부 (연락처)", type=['xlsx', 'csv'], key='mkt_m')
+
+    # 데이터 로드
+    df_ms, _ = load_data_smart(up_mkt_sales, 'sales')
+    df_mm, _ = load_data_smart(up_mkt_mem, 'member')
+
+    st.divider()
+    
+    # 기능 선택 (탭)
+    tab_m1, tab_m2 = st.tabs(["🎯 판매 기반 타겟팅", "🔍 회원 직접 검색"])
+    
+    final_df = pd.DataFrame()
+    sender_name = ""
+
+    # [타겟팅 모드]
+    with tab_m1:
+        if df_ms is None: st.info("판매내역 파일을 올려주세요.")
+        else:
+            # 컬럼 찾기
+            ms_farmer = next((c for c in df_ms.columns if any(x in c for x in ['농가', '공급자'])), None)
+            ms_item = next((c for c in df_ms.columns if any(x in c for x in ['상품', '품목'])), None)
+            ms_buyer = next((c for c in df_ms.columns if any(x in c for x in ['회원', '구매자'])), None)
+            
+            if ms_farmer and ms_buyer:
+                farmers = sorted(df_ms[ms_farmer].astype(str).unique())
+                sel_farmer = st.selectbox("농가 선택", farmers)
+                
+                target_df = df_ms[df_ms[ms_farmer] == sel_farmer].copy()
+                
+                if ms_item:
+                    items = ["전체"] + sorted(target_df[ms_item].astype(str).unique())
+                    sel_item = st.selectbox("상품 선택", items)
+                    if sel_item != "전체": target_df = target_df[target_df[ms_item] == sel_item]
+                
+                loyal = target_df.groupby(ms_buyer).size().reset_index(name='구매횟수').sort_values('구매횟수', ascending=False)
+                
+                # 회원명부 매칭
+                if df_mm is not None:
+                    mm_name = next((c for c in df_mm.columns if any(x in c for x in ['이름', '회원명'])), None)
+                    mm_phone = next((c for c in df_mm.columns if any(x in c for x in ['휴대전화', '전화'])), None)
+                    
+                    if mm_name and mm_phone:
+                        loyal['key'] = loyal[ms_buyer].astype(str).str.replace(' ', '')
+                        df_mm['key'] = df_mm[mm_name].astype(str).str.replace(' ', '')
+                        
+                        merged = pd.merge(loyal, df_mm.drop_duplicates(subset=['key']), on='key', how='left')
+                        final_df = merged[[ms_buyer, mm_phone, '구매횟수']].copy()
+                        final_df.columns = ['이름', '전화번호', '구매횟수']
+                    else:
+                        st.warning("회원명부에서 이름/전화번호를 못 찾았습니다.")
+                        final_df = loyal
+                else:
+                    final_df = loyal
+                    final_df['전화번호'] = ''
+                
+                sender_name = sel_farmer
+                st.success(f"총 {len(final_df)}명의 구매자를 찾았습니다.")
+
+    # [검색 모드]
+    with tab_m2:
+        if df_mm is None: st.info("회원명부 파일을 올려주세요.")
+        else:
+            mm_name = next((c for c in df_mm.columns if any(x in c for x in ['이름', '회원명'])), None)
+            mm_phone = next((c for c in df_mm.columns if any(x in c for x in ['휴대전화', '전화'])), None)
+            
+            search_k = st.text_input("이름 또는 전화번호 검색")
+            if search_k and mm_name and mm_phone:
+                df_mm['c_name'] = df_mm[mm_name].astype(str).str.replace(' ', '')
+                df_mm['c_phone'] = df_mm[mm_phone].apply(clean_phone_number)
+                k = search_k.replace(' ', '')
+                res = df_mm[df_mm['c_name'].str.contains(k) | df_mm['c_phone'].str.contains(k)].copy()
+                
+                if not res.empty:
+                    final_df = res[[mm_name, mm_phone]].copy()
+                    final_df['비고'] = '검색'
+                    final_df.columns = ['이름', '전화번호', '비고']
+                    sender_name = "품앗이마을"
+                    st.success(f"{len(final_df)}명 검색됨")
+                else: st.warning("결과 없음")
+
+    # [공통] 문자 발송 UI
+    if not final_df.empty:
+        st.markdown("---")
+        st.markdown("### 💌 문자 보내기")
+        
+        c_msg1, c_msg2 = st.columns([1, 1])
+        with c_msg1:
+            msg_txt = st.text_area("보낼 내용", height=150, placeholder=f"안녕하세요 {sender_name}입니다...")
+        
+        with c_msg2:
+            st.write("수신자 리스트")
+            # 전화번호 정제
+            if '전화번호' in final_df.columns:
+                final_df['전화번호'] = final_df['전화번호'].apply(clean_phone_number)
+                final_df = final_df[final_df['전화번호'].str.len() >= 10]
+            
+            final_df.insert(0, "선택", True)
+            edited_mkt = st.data_editor(final_df, hide_index=True, height=150)
+            targets = edited_mkt[edited_mkt['선택']]
+            
+            if st.button("🚀 전체 발송", type="primary"):
+                if not st.session_state.api_key or not st.session_state.sender_number:
+                    st.error("상단에 API키/발신번호를 입력해주세요.")
+                else:
+                    bar = st.progress(0)
+                    suc = 0
+                    for i, r in enumerate(targets.itertuples()):
+                        ok, _ = send_coolsms_direct(st.session_state.api_key, st.session_state.api_secret, st.session_state.sender_number, r.전화번호, msg_txt)
+                        if ok: suc += 1
+                        bar.progress((i+1)/len(targets))
+                    st.success(f"{suc}건 발송 완료!")
