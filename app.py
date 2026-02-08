@@ -12,7 +12,7 @@ import requests
 import numpy as np
 
 # ==========================================
-# [중요] 발주 대상 업체 리스트
+# [중요] 발주 대상 업체 리스트 (화이트리스트)
 # ==========================================
 VALID_SUPPLIERS = [
     "(영)옥천친환경농업인연합사업단", "(주)가보트레이딩", "(주)건강생활연구소", "(주)기운찬", "(주)열두달",
@@ -20,20 +20,25 @@ VALID_SUPPLIERS = [
     "2대째바느질(박희선)", "G1상사", "mk코리아", "가가호영어조합법인", "강경대동젓갈상회", "고삼농협",
     "공주농산물가공영농조합법인", "금강향수", "나우푸드", "네니아", "논산줌협동조합", "농부생각",
     "농업회사법인 금산흑삼 주식회사", "농업회사법인 신탄진주조(주)", "농업회사법인 주식회사 연스토리",
-    "농업회사법인(주)담채원", "농업회사법인(주)미녀와김치", "농업회사법인(주)자모", "농업회사법인내포(주)",
-    "농업회사법인천지애", "당암tf", "대전부르스주조 농업회사법인(유)", "대청호민물고기직판장", "더테스트키친",
-    "도마령영농조합법인", "도영미(미마지)", "두레생협", "또또푸드", "로엘팩토리", "맛가마",
-    "백석올미영농조합", "베큘리 주식회사", "보령수협", "사자산영농조합법인", "산계뜰", "산백유통",
-    "산수정미소", "산애들애농원 농업회사법인 주식회사", "새롬식품", "생수콩나물영농조합법인", "서산명가",
-    "서천군수협", "성신양봉(희당꿀,지업사)", "세종로얄양봉원", "수림원 농업회사법인 주식회사", "슈가랩",
-    "씨글로벌(아라찬)", "씨에이치하모니", "언니들공방", "에너지전환해유사회적협동조합", "에르코스", "엔젤농장",
-    "열린부뚜막", "옥천누리영농조합법인", "우리밀농협", "우신영농조합", "원정정미소(박준상)", "원주생명농업",
-    "유기농산", "유안컴퍼니", "인터뷰베이커리", "잇다", "잇초", "자연에찬", "장수군장애인보호작업장",
-    "장수이야기", "제로웨이스트존", "지족점(벌크)", "지족(Y)", "지족점_공동구매", "지족점과일",
-    "지족점야채", "지족매장", "지족점정육", "천호산농원식품", "청양농협조합", "청오건강농업회사법인",
-    "청춘농장", "코레드인터내쇼날", "태경F&B", "토종마을", "통영수산", "폴카닷(이은경)", "하대목장",
-    "한산항아리소곡주", "함지박(주)", "해나루한과영농조합법인", "해피트리목공협동조합", "행복우리식품영농조합",
-    "행복한신선농장", "향지촌", "홍성유기농영농조합법인", "흙살림", "관저매장"
+    "농업회사법인 햇님원 주식회사", "농업회사법인(주)담채원", "농업회사법인(주)미녀와김치",
+    "농업회사법인(주)자모", "농업회사법인내포(주)", "농업회사법인다올(주)", "농업회사법인천지애",
+    "당암tf", "대전부르스주조 농업회사법인(유)", "대청호민물고기직판장", "더테스트키친",
+    "도마령영농조합법인", "도영미(미마지)", "두레생협", "둔산유통", "또또푸드", "로엘팩토리",
+    "맛가마", "매일유업", "백석올미영농조합", "백종진(황실에덴꽃집)", "베큘리 주식회사",
+    "보령수협", "사자산영농조합법인", "산계뜰", "산백유통", "산수정미소",
+    "산애들애농원 농업회사법인 주식회사", "새롬식품", "생수콩나물영농조합법인", "서산명가",
+    "서울우유", "서정자", "서천군수협", "성신양봉(희당꿀,지업사)", "세종로얄양봉원",
+    "수림원 농업회사법인 주식회사", "슈가랩", "신민서", "씨글로벌(아라찬)", "씨에이치하모니",
+    "언니들공방", "에너지전환해유사회적협동조합", "에르코스", "엔젤농장", "연뜰애(부여방앗간)",
+    "열린부뚜막", "옥천누리영농조합법인", "우리밀농협", "우신영농조합", "원정정미소(박준상)",
+    "원주생명농업", "유기농산", "유안컴퍼니", "인터뷰베이커리", "임다빈", "임세묵", "임현주",
+    "잇다", "잇초", "자연당(옥천로컬푸드)", "자연에찬", "장수군장애인보호작업장", "장수이야기",
+    "제로웨이스트존", "지족점(벌크)", "지족(Y)", "지족점_공동구매", "지족점과일", "지족점야채",
+    "지족매장", "지족점정육", "천호산농원식품", "청양농협조합", "청오건강농업회사법인", "청춘농장",
+    "코레드인터내쇼날", "키다리식품(주)", "태경F&B", "토종마을", "통영수산", "팜팜협동조합",
+    "폴카닷(이은경)", "하대목장", "한산항아리소곡주", "한살림유성푸드통합지원센터", "함지박(주)",
+    "해나루한과영농조합법인", "해피트리목공협동조합", "행복우리식품영농조합", "행복한신선농장",
+    "향지촌", "홍성유기농영농조합법인", "흙살림", "관저매장"
 ]
 
 # ==========================================
@@ -116,16 +121,50 @@ def load_data_smart(file_obj, type='sales'):
             return pd.read_excel(file_obj) if file_obj.name.endswith('xlsx') else pd.read_csv(file_obj), "헤더 못 찾음(기본로드)"
         except: return df_raw, "헤더 못 찾음"
 
-# [NEW] 숫자 세탁기 함수 (콤마, 문자 제거)
 def to_clean_number(x):
     try:
         if pd.isna(x) or str(x).strip() == '': return 0
-        # 콤마, 원, 개, 공백 등 숫자와 점(.) 마이너스(-) 빼고 다 제거
         clean_str = re.sub(r'[^0-9.-]', '', str(x))
         if clean_str == '' or clean_str == '.': return 0
         return float(clean_str)
     except:
         return 0
+
+# [NEW] 스마트 컬럼 감지 함수 (우선순위 적용)
+def detect_columns(df_columns):
+    # 1. 상품명
+    s_item = next((c for c in df_columns if any(x in c for x in ['상품', '품목'])), None)
+    
+    # 2. 수량 (판매수량 우선)
+    s_qty = next((c for c in df_columns if any(x in c for x in ['판매수량', '총수량'])), None)
+    if not s_qty:
+        s_qty = next((c for c in df_columns if any(x in c for x in ['수량', '개수'])), None)
+
+    # 3. 금액 (총매출/총판매액 우선, 할인/반품 제외)
+    # 제외할 키워드
+    exclude_keywords = ['할인', '반품', '취소', '면세', '과세', '부가세']
+    
+    # 후보군 1: '총' + '판매'/'매출'
+    candidates_1 = [c for c in df_columns if ('총' in c and ('판매' in c or '매출' in c))]
+    # 후보군 2: '판매'/'매출' + '액'/'금액'
+    candidates_2 = [c for c in df_columns if (('판매' in c or '매출' in c) and ('액' in c or '금액' in c))]
+    # 후보군 3: 그냥 '금액'
+    candidates_3 = [c for c in df_columns if '금액' in c]
+
+    # 제외 키워드가 없는 것만 필터링
+    def is_clean(col_name):
+        return not any(bad in col_name for bad in exclude_keywords)
+
+    s_amt = None
+    for cand in candidates_1 + candidates_2 + candidates_3:
+        if is_clean(cand):
+            s_amt = cand
+            break
+    
+    # 4. 공급자
+    s_farmer = next((c for c in df_columns if any(x in c for x in ['공급자', '농가', '생산자', '거래처'])), None)
+    
+    return s_item, s_qty, s_amt, s_farmer
 
 # ==========================================
 # 1. [기본 설정 및 사이드바]
@@ -219,7 +258,6 @@ if menu == "📢 마케팅 & 문자발송":
                     final_df = loyal
                     final_df['전화번호'] = '-'
                     final_df.columns = ['이름', '비고', '전화번호']
-
     else:
         if df_member is None: st.info("👈 왼쪽에서 [회원명부] 파일을 올려주세요.")
         else:
@@ -317,14 +355,19 @@ elif menu == "📦 자동 채움 발주":
         df_s, _ = load_data_smart(up_sales, 'sales')
         
         if df_s is not None:
-            # 컬럼 자동 감지
-            s_item = next((c for c in df_s.columns if any(x in c for x in ['상품', '품목'])), None)
-            s_qty = next((c for c in df_s.columns if any(x in c for x in ['수량', '개수'])), None)
-            s_amt = next((c for c in df_s.columns if any(x in c for x in ['금액', '매출', '판매액'])), None)
-            s_farmer = next((c for c in df_s.columns if any(x in c for x in ['공급자', '농가', '생산자', '거래처'])), None)
+            # 1. 컬럼 자동 감지 (업그레이드)
+            s_item, s_qty, s_amt, s_farmer = detect_columns(df_s.columns.tolist())
+            
+            with st.expander("🧐 **(디버그) 데이터 컬럼 확인하기**", expanded=False):
+                st.write(f"- **상품명 열**: {s_item}")
+                st.write(f"- **판매수량 열**: {s_qty}")
+                st.write(f"- **판매금액 열**: {s_amt} (할인/반품 제외됨)")
+                st.write(f"- **공급자 열**: {s_farmer}")
+                if not s_amt:
+                    st.error("🚨 판매금액 컬럼을 못 찾았습니다! 엑셀 파일을 확인해주세요.")
             
             if s_item and s_qty and s_amt:
-                # 1. 화이트리스트 필터링
+                # 2. 화이트리스트 필터링
                 if s_farmer:
                     valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
                     df_s['clean_farmer'] = df_s[s_farmer].astype(str).str.replace(' ', '')
@@ -335,11 +378,11 @@ elif menu == "📦 자동 채움 발주":
                     st.warning("⚠️ '농가/공급자' 컬럼이 없어 필터링 없이 진행합니다.")
                     df_target = df_s.copy()
 
-                # [NEW] 2. 데이터 세탁 (콤마 제거)
+                # 3. 데이터 세탁 (콤마 제거)
                 df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
                 df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
                 
-                # 3. 데이터 집계
+                # 4. 데이터 집계
                 groupby_cols = [s_farmer, s_item] if s_farmer else [s_item]
                 agg = df_target.groupby(groupby_cols)[[s_qty, s_amt]].sum().reset_index()
                 
@@ -351,20 +394,19 @@ elif menu == "📦 자동 채움 발주":
 
                 agg = agg[agg['판매량'] > 0]
 
-                # 4. 계산
+                # 5. 계산
                 agg['평균판매가'] = agg['총판매액'] / agg['판매량']
                 agg['추정매입가'] = agg['평균판매가'] * purchase_rate
                 agg['발주량'] = np.ceil(agg['판매량'] * safety)
                 agg['예상매입액'] = agg['발주량'] * agg['추정매입가']
                 
-                # 5. 화면 분할 (요약 vs 상세)
+                # 6. 화면 분할
                 tab1, tab2 = st.tabs(["📋 품목별 상세 발주 (수정)", "🏢 업체별 요약 (확인)"])
                 
                 # --- Tab 1: 상세 수정 ---
                 with tab1:
                     st.markdown("### 🔍 발주 리스트 (업체별 정렬됨)")
                     
-                    # 필터 기능
                     all_suppliers = sorted(agg['업체명'].unique().tolist())
                     sel_suppliers = st.multiselect("업체만 골라보기 (비워두면 전체)", all_suppliers)
                     
@@ -373,7 +415,6 @@ elif menu == "📦 자동 채움 발주":
                     else:
                         view_df = agg.copy()
                     
-                    # 정렬: 업체명 가나다 -> 판매액 높은순
                     view_df = view_df.sort_values(by=['업체명', '총판매액'], ascending=[True, False])
                     
                     edited = st.data_editor(
@@ -390,7 +431,6 @@ elif menu == "📦 자동 채움 발주":
                         height=500
                     )
                     
-                    # 합계 및 다운로드
                     current_total = (edited['발주량'] * edited['추정매입가']).sum()
                     st.markdown(f"#### 💰 총 발주금액: :blue[{current_total:,.0f}원]")
                     
@@ -399,7 +439,6 @@ elif menu == "📦 자동 채움 발주":
                     else:
                         st.success(f"✅ 예산 잔액: {budget - current_total:,.0f}원")
                     
-                    # 엑셀 다운로드 (전체)
                     final_order = edited[edited['발주량'] > 0].copy()
                     buf_f = io.BytesIO()
                     final_order.to_excel(buf_f, index=False)
@@ -412,7 +451,6 @@ elif menu == "📦 자동 채움 발주":
                 # --- Tab 2: 업체별 요약 ---
                 with tab2:
                     st.markdown("### 🏢 업체별 매입 예상액")
-                    # 원본 agg 기준 요약 (수정된 발주량 반영 안 됨 주의 - 안내 필요)
                     summary = agg.groupby('업체명')['예상매입액'].sum().reset_index()
                     summary = summary.sort_values('예상매입액', ascending=False)
                     
@@ -429,8 +467,8 @@ elif menu == "📦 자동 채움 발주":
                         use_container_width=True,
                         hide_index=True
                     )
-                    st.info("💡 이 요약표는 초기 계산값 기준입니다. (상세 탭에서 수량을 수정해도 여기엔 바로 반영되지 않습니다.)")
+                    st.info("💡 이 요약표는 초기 계산값 기준입니다.")
 
-            else: st.error("파일 컬럼 오류: [상품명, 수량, 금액]이 필요합니다.")
+            else: st.error("파일에서 [상품명, 수량, 금액] 컬럼을 찾을 수 없습니다. (디버그 창을 확인하세요)")
     else:
         st.info("👈 왼쪽에서 '어제 판매내역' 파일을 업로드해주세요.")
