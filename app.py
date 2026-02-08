@@ -12,13 +12,12 @@ import requests
 import numpy as np
 
 # ==========================================
-# [설정] 서버에 저장된 연락처 파일명
+# [설정] 서버 연락처 파일명
 # ==========================================
-# 이 파일이 깃허브(서버) 같은 폴더에 있어야 합니다.
 SERVER_CONTACT_FILE = "농가관리 목록_20260208 (전체).xlsx"
 
 # ==========================================
-# [중요] 발주 대상 업체 리스트
+# [중요] 발주 대상 업체 리스트 (화이트리스트)
 # ==========================================
 VALID_SUPPLIERS = [
     "(주)가보트레이딩", "(주)열두달", "(주)우리밀", "(주)윈윈농수산", "(주)유기샘",
@@ -82,7 +81,6 @@ def load_data_smart(file_obj, type='sales'):
     try: df_raw = pd.read_excel(file_obj, header=None, engine='openpyxl')
     except:
         try:
-            # 파일 객체일 경우 seek
             if hasattr(file_obj, 'seek'): file_obj.seek(0)
             df_raw = pd.read_csv(file_obj, header=None, encoding='utf-8')
         except: return None, "읽기 실패"
@@ -190,7 +188,7 @@ if menu == "📢 마케팅 & 문자발송":
 # ==========================================
 elif menu == "📦 자동 채움 발주":
     st.title("📦 시다비서: 자동 채움 발주 + 안심 문자")
-    st.markdown("##### **'채움(Fill)'**: 판매 데이터 $\\rightarrow$ **업체별 자동 분류 & 문자 발송**")
+    st.markdown("##### **'채움(Fill)'**: 판매 데이터 분석 $\\rightarrow$ **건별 확인 후** 문자 발주")
     
     with st.sidebar:
         st.subheader("⚙️ 계산 설정")
@@ -200,20 +198,21 @@ elif menu == "📦 자동 채움 발주":
         purchase_rate = purchase_rate_pct / 100.0
         
         st.subheader("📂 파일 업로드")
-        # 판매내역만 업로드 (연락처는 서버에서 로드)
         up_sales_list = st.file_uploader("판매 실적 파일 (여러 개 가능)", type=['xlsx', 'csv'], key='ord_sales', accept_multiple_files=True)
         
-        # [서버 파일 로드 상태 표시]
-        if os.path.exists(SERVER_CONTACT_FILE):
-            st.success(f"📞 서버 연락처 파일 감지됨\n({SERVER_CONTACT_FILE})")
-        else:
-            st.error(f"❌ 연락처 파일이 서버에 없습니다.\n'{SERVER_CONTACT_FILE}'을 올려주세요.")
+        # [NEW] 탐정 모드 스위치
+        st.markdown("---")
+        show_all_data = st.checkbox("🕵️‍♂️ **모든 데이터 보기 (필터 해제)**", help="업체 리스트에 없는 항목도 모두 표시합니다. 데이터가 안 보일 때 체크하세요!")
 
-    # 연락처 로드 (서버 파일 우선)
+        if os.path.exists(SERVER_CONTACT_FILE):
+            st.success(f"📞 서버 연락처 사용 중")
+        else:
+            st.error(f"❌ 서버에 연락처 파일이 없습니다.")
+
+    # 연락처 로드
     df_phone_map = pd.DataFrame()
     if os.path.exists(SERVER_CONTACT_FILE):
         try:
-            # 서버 파일 읽기
             with open(SERVER_CONTACT_FILE, "rb") as f:
                 df_i, _ = load_data_smart(f, 'info')
             
@@ -224,11 +223,10 @@ elif menu == "📦 자동 채움 발주":
                     df_i['clean_name'] = df_i[i_name].astype(str).str.replace(' ', '')
                     df_i['clean_phone'] = df_i[i_phone].apply(clean_phone_number)
                     df_phone_map = df_i.drop_duplicates(subset=['clean_name'])[['clean_name', 'clean_phone']]
-                    # st.toast 로드 성공 메시지는 너무 자주 뜨면 귀찮으니 생략하거나 sidebar에 표시
         except Exception as e:
             st.error(f"서버 연락처 파일 로드 중 오류: {e}")
 
-    # 판매내역 로드 및 병합
+    # 판매내역 병합
     df_s = None
     if up_sales_list:
         df_list = []
@@ -236,7 +234,6 @@ elif menu == "📦 자동 채움 발주":
             d, _ = load_data_smart(file_obj, 'sales')
             if d is not None:
                 df_list.append(d)
-        
         if df_list:
             df_s = pd.concat(df_list, ignore_index=True)
             if len(up_sales_list) > 1:
@@ -246,6 +243,7 @@ elif menu == "📦 자동 채움 발주":
         s_item, s_qty, s_amt, s_farmer = detect_columns(df_s.columns.tolist())
         
         if s_item and s_qty and s_amt:
+            # 1. 업체 분류 로직 (탐정 모드 반영)
             if s_farmer:
                 valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
                 df_s['clean_farmer'] = df_s[s_farmer].astype(str).str.replace(' ', '')
@@ -253,21 +251,31 @@ elif menu == "📦 자동 채움 발주":
                 def classify_supplier(name):
                     if "지족" in name: return "지족(사입)"
                     elif name in valid_set: return "일반업체"
-                    else: return "제외"
+                    else: return "제외" if not show_all_data else "일반업체(강제)" # 탐정 모드 켜면 모두 '일반업체(강제)'로
 
                 df_s['구분'] = df_s['clean_farmer'].apply(classify_supplier)
                 df_target = df_s[df_s['구분'] != "제외"].copy()
                 
+                # 제외된 업체가 많다면 알려주기
+                excluded_count = len(df_s) - len(df_target)
+                if excluded_count > 0 and not show_all_data:
+                    with st.expander(f"⚠️ {excluded_count}개 품목이 업체 리스트에 없어 제외되었습니다. (클릭해서 확인)"):
+                        excluded_vendors = df_s[df_s['구분'] == '제외'][s_farmer].unique()
+                        st.write("제외된 업체명:", excluded_vendors)
+                        st.caption("👉 이 업체들도 보고 싶다면 왼쪽 사이드바의 **'모든 데이터 보기'**를 체크하세요.")
+
                 if not df_phone_map.empty:
                     df_target = pd.merge(df_target, df_phone_map, left_on='clean_farmer', right_on='clean_name', how='left')
                     df_target.rename(columns={'clean_phone': '전화번호'}, inplace=True)
                 else:
                     df_target['전화번호'] = ''
             else:
+                # 공급자 컬럼 없을 때
                 df_target = df_s.copy()
                 df_target['구분'] = "일반업체"
                 df_target['전화번호'] = ''
 
+            # 2. 데이터 정제
             df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
             df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
             
@@ -294,18 +302,17 @@ elif menu == "📦 자동 채움 발주":
             # =================================================================================
             tab1, tab2 = st.tabs(["🏢 외부업체 건별 발주", "🏪 지족 사입 건별 발주"])
             
-            # 공통 렌더링 함수
-            def render_order_tab(target_group_name, tab_key):
-                df_tab = agg_item[agg_item['구분'] == target_group_name].copy()
+            def render_order_tab(target_group_names, tab_key):
+                # 리스트로 받아서 처리 (탐정모드일 때 '일반업체(강제)'도 포함하기 위함)
+                df_tab = agg_item[agg_item['구분'].isin(target_group_names)].copy()
                 
                 if df_tab.empty:
-                    st.info(f"{target_group_name} 대상 품목이 없습니다.")
+                    st.info("표시할 품목이 없습니다.")
                     return
 
-                st.markdown(f"### 📝 {target_group_name} 문자 발주")
+                st.markdown(f"### 📝 문자 발주 ({len(df_tab)} 품목)")
                 
-                # 검색창
-                search_term = st.text_input(f"🔍 {target_group_name} 검색", key=f"search_{tab_key}")
+                search_term = st.text_input(f"🔍 업체명 검색 ({tab_key})", key=f"search_{tab_key}")
                 all_vendors = sorted(df_tab['업체명'].unique())
                 target_vendors = [v for v in all_vendors if search_term in v] if search_term else all_vendors
 
@@ -354,18 +361,19 @@ elif menu == "📦 자동 채움 발주":
                         with c2:
                             st.text_area("내용 수정", value=default_msg, height=150, key=f"msg_{tab_key}_{vendor}")
 
-                with tab1:
-                    render_order_tab("일반업체", "ext")
+            with tab1:
+                # 일반업체 + (탐정모드 시) 강제표시 업체
+                render_order_tab(["일반업체", "일반업체(강제)"], "ext")
 
-                with tab2:
-                    render_order_tab("지족(사입)", "int")
-                    
-                st.markdown("---")
-                st.markdown("### 📊 전체 요약")
-                total_all = (agg_item['발주량'] * agg_item['추정매입가']).sum()
-                c1, c2 = st.columns(2)
-                c1.metric("총 발주 예상액", f"{total_all:,.0f}원")
-                c2.metric("예산 잔액", f"{budget - total_all:,.0f}원")
+            with tab2:
+                render_order_tab(["지족(사입)"], "int")
+                
+            st.markdown("---")
+            st.markdown("### 📊 전체 요약")
+            total_all = (agg_item['발주량'] * agg_item['추정매입가']).sum()
+            c1, c2 = st.columns(2)
+            c1.metric("총 발주 예상액", f"{total_all:,.0f}원")
+            c2.metric("예산 잔액", f"{budget - total_all:,.0f}원")
 
         else: st.error("컬럼 감지 실패! (디버그 창 확인)")
     else:
