@@ -12,9 +12,10 @@ import requests
 import numpy as np
 
 # ==========================================
-# [설정] 서버 파일 경로
+# [설정] 서버 파일 경로 (자동 로드용)
 # ==========================================
-SERVER_CONTACT_FILE = "농가관리 목록_20260208 (전체).xlsx"
+SERVER_CONTACT_FILE = "농가관리 목록_20260208 (전체).xlsx"  # 업체 연락처
+SERVER_MEMBER_FILE = "회원관리(전체).xlsx"                # 회원 명부
 
 # ==========================================
 # [중요] 발주 대상 업체 (화이트리스트)
@@ -149,18 +150,16 @@ with st.sidebar:
 # ==========================================
 st.title("🤖 시다비서 (Sida Works)")
 
-# [가이드] 처음 온 사람을 위한 안내
-with st.expander("📘 **시다의 친절한 사용 가이드 (처음 오셨나요?)**", expanded=False):
+with st.expander("📘 **시다의 친절한 사용 가이드 (필독)**", expanded=False):
     st.markdown("""
-    1.  **왼쪽(사이드바)**에 있는 **[문자 설정]**에 키 값을 먼저 넣어주세요.
+    1.  **왼쪽(사이드바)**에 키 값을 먼저 넣어주세요.
     2.  아래 **[업무 선택]**에서 할 일을 고르세요.
         * 📦 **자동 발주:** 판매 데이터를 넣으면, 알아서 계산하고 문자를 만들어줍니다.
         * 📢 **마케팅:** 단골을 찾거나 특정 회원에게 문자를 보냅니다.
-    3.  **파일 업로드** 박스를 열어 엑셀 파일을 끌어다 놓으세요.
-    4.  화면에 뜨는 내용을 확인하고 **[🚀 전송]** 버튼을 누르면 끝!
+    3.  **파일 업로드:** * 발주할 땐 **'판매 실적'**만! (연락처는 서버에 있어요)
+        * 마케팅할 때도 **'판매 실적'**만! (회원명부는 서버에 있어요)
     """)
 
-# 업무 선택
 menu = st.radio("", ["📦 자동 채움 발주", "📢 마케팅 & 문자"], horizontal=True)
 
 # ---------------------------------------------------------------------------------
@@ -168,23 +167,20 @@ menu = st.radio("", ["📦 자동 채움 발주", "📢 마케팅 & 문자"], ho
 # ---------------------------------------------------------------------------------
 if menu == "📦 자동 채움 발주":
     
-    # 상단 컨트롤 패널 (가로 배치)
     with st.container(border=True):
         st.markdown("##### 🛠️ 발주 계산기 설정")
         c1, c2, c3, c4 = st.columns(4)
         budget = c1.number_input("💰 예산 (원)", value=500000, step=10000)
-        safety = c2.slider("📈 안전 계수", 1.0, 1.5, 1.1, step=0.1, help="판매량보다 얼마나 더 여유있게 시킬까요?")
-        purchase_rate = c3.slider("📊 매입 원가율 (%)", 10, 100, 70, step=5, help="판매가 대비 매입가 비율") / 100.0
-        show_all_data = c4.checkbox("🕵️‍♂️ 모든 데이터 보기", help="체크하면 필터링 없이 모든 품목을 보여줍니다.")
+        safety = c2.slider("📈 안전 계수", 1.0, 1.5, 1.1, step=0.1)
+        purchase_rate = c3.slider("📊 매입 원가율 (%)", 10, 100, 70, step=5) / 100.0
+        show_all_data = c4.checkbox("🕵️‍♂️ 모든 데이터 보기")
 
-    # 파일 업로드 (Expander)
     with st.expander("📂 **[파일 열기] 판매 데이터를 넣어주세요**", expanded=True):
         up_sales_list = st.file_uploader("판매 실적 파일 (여러 개 가능)", type=['xlsx', 'csv'], accept_multiple_files=True, key='ord_up')
         if os.path.exists(SERVER_CONTACT_FILE):
-            st.success(f"📞 서버 연락처 파일 연동됨: {SERVER_CONTACT_FILE}")
-        else: st.warning("⚠️ 서버 연락처 파일이 없습니다. (자동 매핑 불가)")
+            st.success(f"📞 서버 연락처 파일 로드됨: {SERVER_CONTACT_FILE}")
+        else: st.warning("⚠️ 서버 연락처 파일이 없습니다.")
 
-    # (데이터 처리 로직)
     df_phone_map = pd.DataFrame()
     if os.path.exists(SERVER_CONTACT_FILE):
         try:
@@ -250,22 +246,17 @@ if menu == "📦 자동 채움 발주":
             agg_item['발주량'] = np.ceil(agg_item['판매량'] * safety)
             agg_item['예상매입액'] = agg_item['발주량'] * agg_item['추정매입가']
             
-            # --- 탭 구성 ---
             tab1, tab2 = st.tabs(["🏢 외부업체 건별 발주", "🏪 지족 사입 건별 발주"])
             
             def render_order_tab(target_groups, tab_key):
                 df_tab = agg_item[agg_item['구분'].isin(target_groups)].copy()
                 if df_tab.empty:
-                    st.info("데이터가 없습니다.")
+                    st.info("데이터 없음")
                     return
                 
-                # 요약바
                 total_tab = (df_tab['발주량'] * df_tab['추정매입가']).sum()
-                st.markdown(f"""
-                <div style="padding:10px; background-color:#f0f2f6; border-radius:5px; margin-bottom:10px;">
-                    <b>📊 그룹 합계:</b> {total_tab:,.0f}원 / <b>품목 수:</b> {len(df_tab)}개
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown(f"""<div style="padding:10px; background-color:#f0f2f6; border-radius:5px; margin-bottom:10px;">
+                    <b>📊 그룹 합계:</b> {total_tab:,.0f}원 / <b>품목 수:</b> {len(df_tab)}개</div>""", unsafe_allow_html=True)
 
                 search = st.text_input(f"🔍 업체명 검색", key=f"s_{tab_key}", placeholder="업체명 입력...")
                 all_v = sorted(df_tab['업체명'].unique())
@@ -288,8 +279,7 @@ if menu == "📦 자동 채움 발주":
                             in_phone = st.text_input("전화번호", value=phone, key=f"p_{tab_key}_{vendor}")
                             if not is_sent:
                                 if st.button(f"🚀 전송", key=f"b_{tab_key}_{vendor}", type="primary"):
-                                    if not st.session_state.api_key or not st.session_state.sender_number: 
-                                        st.error("👈 왼쪽 사이드바에 API 키를 입력하세요!")
+                                    if not st.session_state.api_key or not st.session_state.sender_number: st.error("👈 왼쪽 사이드바에 API 키를 입력하세요!")
                                     else:
                                         final_msg = st.session_state.get(f"m_{tab_key}_{vendor}", default_msg)
                                         ok, res = send_coolsms_direct(st.session_state.api_key, st.session_state.api_secret, st.session_state.sender_number, clean_phone_number(in_phone), final_msg)
@@ -318,13 +308,21 @@ if menu == "📦 자동 채움 발주":
 elif menu == "📢 마케팅 & 문자":
     st.info("문자 발송 설정은 **왼쪽 사이드바**에서 해주세요.")
     
-    with st.expander("📂 **[파일 열기] 타겟팅용 파일 업로드**", expanded=True):
-        c1, c2 = st.columns(2)
-        up_mkt_sales = c1.file_uploader("1. 판매내역 (타겟팅)", type=['xlsx', 'csv'], key='mkt_s')
-        up_mkt_mem = c2.file_uploader("2. 회원명부 (연락처)", type=['xlsx', 'csv'], key='mkt_m')
+    with st.expander("📂 **[파일 열기] 타겟팅용 판매 데이터 업로드**", expanded=True):
+        up_mkt_sales = st.file_uploader("1. 판매내역 (타겟팅)", type=['xlsx', 'csv'], key='mkt_s')
+        if os.path.exists(SERVER_MEMBER_FILE):
+            st.success(f"📞 서버 회원명부 파일 연동됨: {SERVER_MEMBER_FILE}")
+        else: st.warning("⚠️ 서버 회원명부 파일이 없습니다.")
 
     df_ms, _ = load_data_smart(up_mkt_sales, 'sales')
-    df_mm, _ = load_data_smart(up_mkt_mem, 'member')
+    
+    # 회원명부 자동 로드
+    df_mm = None
+    if os.path.exists(SERVER_MEMBER_FILE):
+        try:
+            with open(SERVER_MEMBER_FILE, "rb") as f:
+                df_mm, _ = load_data_smart(f, 'member')
+        except: pass
 
     st.divider()
     
@@ -368,7 +366,7 @@ elif menu == "📢 마케팅 & 문자":
                 st.success(f"총 {len(final_df)}명의 구매자를 찾았습니다.")
 
     with tab_m2:
-        if df_mm is None: st.info("회원명부 파일을 올려주세요.")
+        if df_mm is None: st.info("서버에 회원명부 파일이 없거나 로드되지 않았습니다.")
         else:
             mm_name = next((c for c in df_mm.columns if any(x in c for x in ['이름', '회원명'])), None)
             mm_phone = next((c for c in df_mm.columns if any(x in c for x in ['휴대전화', '전화'])), None)
