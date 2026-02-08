@@ -146,7 +146,6 @@ def detect_columns(df_columns):
 # ==========================================
 st.set_page_config(page_title="시다비서 (시비)", page_icon="🤖", layout="wide")
 
-# 세션 상태 초기화 (발송 완료 체크용)
 if 'sent_history' not in st.session_state:
     st.session_state.sent_history = set()
 
@@ -200,7 +199,7 @@ elif menu == "📦 자동 채움 발주":
     if up_sales:
         df_s, _ = load_data_smart(up_sales, 'sales')
         
-        # 연락처 정보 로드
+        # 연락처 로드
         df_phone_map = pd.DataFrame()
         if up_info:
             df_i, _ = load_data_smart(up_info, 'info')
@@ -229,7 +228,6 @@ elif menu == "📦 자동 채움 발주":
                     df_s['구분'] = df_s['clean_farmer'].apply(classify_supplier)
                     df_target = df_s[df_s['구분'] != "제외"].copy()
                     
-                    # 연락처 매핑
                     if not df_phone_map.empty:
                         df_target = pd.merge(df_target, df_phone_map, left_on='clean_farmer', right_on='clean_name', how='left')
                         df_target.rename(columns={'clean_phone': '전화번호'}, inplace=True)
@@ -274,28 +272,33 @@ elif menu == "📦 자동 채움 발주":
                         st.info("발주 대상 외부 업체가 없습니다.")
                     else:
                         st.markdown("### 📝 업체별 발주 문자 확인 & 전송")
-                        st.caption("아래 카드에서 내용을 확인하고, 하나씩 전송하세요. 번호 수정도 가능합니다.")
                         
-                        # 업체 리스트
-                        vendors = sorted(df_ext['업체명'].unique())
+                        # [NEW] 검색창 추가
+                        search_term = st.text_input("🔍 업체명 검색", placeholder="찾고 싶은 업체명을 입력하세요...")
                         
-                        for vendor in vendors:
-                            # 이미 보낸 업체인지 확인
+                        # 업체 리스트 추출 및 필터링
+                        all_vendors = sorted(df_ext['업체명'].unique())
+                        
+                        if search_term:
+                            target_vendors = [v for v in all_vendors if search_term in v]
+                            if not target_vendors:
+                                st.warning(f"'{search_term}'에 해당하는 업체가 없습니다.")
+                        else:
+                            target_vendors = all_vendors
+
+                        st.markdown("---")
+
+                        for vendor in target_vendors:
                             is_sent = vendor in st.session_state.sent_history
-                            
-                            # 업체별 데이터
                             v_data = df_ext[df_ext['업체명'] == vendor]
                             default_phone = str(v_data['전화번호'].iloc[0]) if not pd.isna(v_data['전화번호'].iloc[0]) else ''
                             
-                            # 기본 문자 메시지 생성
                             msg_lines = [f"[{vendor} 발주]"]
                             for _, row in v_data.iterrows():
                                 msg_lines.append(f"- {row['상품명']}: {int(row['발주량'])}")
                             msg_lines.append("잘 부탁드립니다!")
                             default_msg = "\n".join(msg_lines)
                             
-                            # --- 카드형 UI (Expander) ---
-                            # 보낸 건은 초록색 체크, 안 보낸 건 빨간색 느낌표
                             icon = "✅" if is_sent else "📩"
                             label = f"{icon} {vendor} (총 {len(v_data)}품목)"
                             
@@ -303,35 +306,30 @@ elif menu == "📦 자동 채움 발주":
                                 c1, c2 = st.columns([1, 2])
                                 
                                 with c1:
-                                    # 전화번호 입력 (수정 가능)
                                     input_phone = st.text_input("전화번호", value=default_phone, key=f"phone_{vendor}")
                                     
-                                    # 상태 표시
                                     if is_sent:
-                                        st.success("발송 완료된 업체입니다.")
+                                        st.success("발송 완료됨")
                                     else:
-                                        # 전송 버튼
-                                        if st.button(f"🚀 {vendor} 전송하기", key=f"btn_{vendor}", type="primary"):
+                                        if st.button(f"🚀 {vendor} 전송", key=f"btn_{vendor}", type="primary"):
                                             if not api_key or not api_secret or not sender_number:
-                                                st.error("API Key와 발신번호를 입력하세요!")
+                                                st.error("API Key와 발신번호 필요!")
                                             else:
                                                 clean_p = clean_phone_number(input_phone)
-                                                # 여기서 메시지는 아래 텍스트 에어리어의 값을 가져와야 함 (st.session_state 이용)
                                                 final_msg = st.session_state.get(f"msg_{vendor}", default_msg)
                                                 
                                                 if len(clean_p) < 10:
-                                                    st.error("전화번호를 확인해주세요.")
+                                                    st.error("전화번호 확인 필요")
                                                 else:
                                                     ok, res = send_coolsms_direct(api_key, api_secret, sender_number, clean_p, final_msg)
                                                     if ok:
                                                         st.session_state.sent_history.add(vendor)
-                                                        st.rerun() # 상태 업데이트를 위해 리런
+                                                        st.rerun()
                                                     else:
-                                                        st.error(f"전송 실패: {res.get('errorMessage')}")
+                                                        st.error(f"실패: {res.get('errorMessage')}")
 
                                 with c2:
-                                    # 문자 내용 수정 (Text Area)
-                                    st.text_area("문자 내용 (수정 가능)", value=default_msg, height=150, key=f"msg_{vendor}")
+                                    st.text_area("내용 수정", value=default_msg, height=150, key=f"msg_{vendor}")
 
                 # --- Tab 2: 지족 사입 & 요약 ---
                 with tab2:
